@@ -1,0 +1,29 @@
+# Direct heavy ML dependencies — input for uv pip compile.
+#
+# Resolved + hash-locked into requirements-heavy-{cpu,cuda}.txt by
+# `make heavy-deps-lock`. Both Dockerfiles install from those lockfiles with
+# --require-hashes, so any post-publish hijack of a wheel mismatches its
+# recorded hash and fails the install.
+#
+# torch is in this list — uv's --torch-backend flag steers it to the right
+# index (cpu or cu126), and --generate-hashes records the corresponding
+# wheel hash. Same input → two outputs (requirements-heavy-{cpu,cuda}.txt).
+#
+# timesfm is installed --no-deps from a pinned git SHA in the Dockerfile —
+# git SHA pinning is the hash check for that one.
+torch==2.4.1
+transformers==4.57.6
+accelerate==1.13.0
+safetensors==0.7.0
+einops==0.7.0
+scikit-learn==1.8.0
+lightning==2.6.1
+gluonts==0.14.4
+chronos-forecasting==2.2.2
+uni2ts==2.0.0
+datasets==2.17.1
+# hydra-core + jax + scipy: pulled in transitively by uni2ts. Letting the
+# resolver pick a compatible version avoids manual-pin conflicts
+# (hydra-core has a hard `==1.3` from uni2ts; jax has a numpy>=2 cap that
+# conflicts with gluonts<numpy 2). All transitive picks end up in the
+# generated lockfile with their hashes anyway.

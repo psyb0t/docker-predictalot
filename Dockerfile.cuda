@@ -1,0 +1,128 @@
+# syntax=docker/dockerfile:1.7
+#
+# CUDA image — nvidia/cuda runtime base + PyTorch CUDA wheels.
+# linux/amd64 only — CUDA on arm64 is a different stack (SBSA / Jetson L4T).
+#
+# Diff vs the CPU Dockerfile is small:
+#   - base image: nvidia/cuda:12.6-runtime-ubuntu24.04
+#   - torch installed from https://download.pytorch.org/whl/cu126
+#   - NVIDIA_* env vars baked in so `docker run --gpus all` works out of box.
+# Otherwise identical: same heavy-dep set, same source layout, same entrypoint.
+
+FROM nvidia/cuda:12.6.2-runtime-ubuntu24.04@sha256:16411bb06f363425265b410810a86fc43da705847ee9721be45b478bc4d0ea26 AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-venv python3-pip \
+        build-essential \
+        git \
+        curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python \
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python3
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.15@sha256:e590846f4776907b254ac0f44b5b380347af5d90d668138ca7938d1b0c2f98d3 /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock* ./
+COPY src ./src
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --python /usr/bin/python3.12 \
+    || uv sync --no-dev --python /usr/bin/python3.12
+
+# Heavy ML deps — hash-locked. torch is the cu124 build (cu126 wheels start
+# at torch 2.5; uni2ts caps us at torch<2.5, so we use cu124. CUDA runtimes
+# are forward-compat at minor level so cu124 wheels run on 12.6.2 runtime).
+COPY requirements-cuda.txt ./
+# torch+cu124 lives on pytorch.org's CUDA index. See CPU Dockerfile for the
+# --no-config + --index-strategy rationale (same trade-offs).
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/venv/bin/python \
+        --no-config \
+        --require-hashes \
+        --extra-index-url https://download.pytorch.org/whl/cu124 \
+        --index-strategy unsafe-best-match \
+        -r requirements-cuda.txt
+
+ARG TIMESFM_REF=d720daa6786539c2566a44464fbda1019c0a82c0
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/venv/bin/python --no-deps \
+        "timesfm[torch] @ git+https://github.com/google-research/timesfm.git@${TIMESFM_REF}"
+
+# Toto-1 — same --no-deps pattern as the CPU Dockerfile (see that file's
+# comment for the version-conflict rationale).
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/venv/bin/python --no-deps \
+        "toto-ts==0.1.4" \
+        "rotary-embedding-torch==0.8.6" \
+        "jaxtyping==0.2.29"
+
+# Sundial sidecar venv — see CPU Dockerfile comment block for the rationale.
+# Same fresh-install approach (no symlink trick).
+RUN python3.12 -m venv /opt/sundial-venv
+
+COPY requirements-sundial.txt ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/sundial-venv/bin/python \
+        --no-config \
+        --index-url https://download.pytorch.org/whl/cu124 \
+        --index-strategy unsafe-best-match \
+        "torch==2.4.1" \
+    && uv pip install --python /opt/sundial-venv/bin/python \
+        --no-config \
+        -r requirements-sundial.txt
+
+COPY --chown=predictalot:predictalot sundial_worker /opt/sundial_worker
+
+# -----------------------------------------------------------------------------
+FROM nvidia/cuda:12.6.2-runtime-ubuntu24.04@sha256:16411bb06f363425265b410810a86fc43da705847ee9721be45b478bc4d0ea26 AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH=/app/src \
+    TZ=UTC \
+    DEBIAN_FRONTEND=noninteractive \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    PREDICTALOT_HOST=0.0.0.0 \
+    PREDICTALOT_PORT=8080 \
+    PREDICTALOT_MODEL_DIR=/models \
+    PREDICTALOT_DEVICE=auto
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python \
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python3 \
+    && (userdel -r ubuntu 2>/dev/null || true) \
+    && useradd -u 1000 --create-home --shell /bin/bash predictalot \
+    && mkdir -p /models \
+    && chown predictalot:predictalot /models
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /opt/sundial-venv /opt/sundial-venv
+COPY --from=builder --chown=predictalot:predictalot /opt/sundial_worker /opt/sundial_worker
+COPY --chown=predictalot:predictalot src ./src
+COPY --chown=predictalot:predictalot pyproject.toml ./
+COPY --chown=predictalot:predictalot entrypoint.sh /usr/local/bin/predictalot-entrypoint
+RUN chmod +x /usr/local/bin/predictalot-entrypoint
+
+USER predictalot
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz').status==200 else 1)" || exit 1
+
+ENTRYPOINT ["/usr/local/bin/predictalot-entrypoint"]

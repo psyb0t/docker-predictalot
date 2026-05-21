@@ -1,0 +1,410 @@
+# predictalot
+
+> One HTTP endpoint, five foundation time-series forecasters, zero ceremony.
+
+`POST /v1/forecast` with `{"model": "chronos-2", "context": [[...]], "config": {"horizon": 24}}` → quantile forecast back. Swap the slug — `chronos-2`, `timesfm-2.5`, `moirai-2`, `toto-1`, `sundial-base-128m` — and the wire shape stays identical.
+
+For weighted combinations: `POST /v1/forecast/ensemble` runs multiple models in parallel and returns a weighted-mean forecast plus each contributing model's individual result. Per-model `weights` let you tune the mix (set a model's weight to `0` to skip it entirely).
+
+MCP streamable-http server at `/mcp` exposes five named forecast tools (`forecast_chronos_2`, `forecast_timesfm_2_5`, `forecast_moirai_2`, `forecast_toto_1`, `forecast_sundial_base_128m`) plus `forecast_ensemble` and `list_models`.
+
+## Quick start
+
+```bash
+docker run -d --name predictalot \
+  -v $HOME/predictalot-models:/models \
+  -e PREDICTALOT_AUTH_TOKENS=changeme \
+  -p 8080:8080 \
+  psyb0t/predictalot:latest
+
+# First call to a model downloads its weights into /models (~50-800MB each).
+# Subsequent calls are fast. Bind-mount /models to persist across restarts.
+curl -s http://localhost:8080/v1/forecast \
+  -H "Authorization: Bearer changeme" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "chronos-2",
+    "context": [[10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]],
+    "config": {"horizon": 5}
+  }' | jq
+
+# Ensemble — run several models in parallel, get a weighted mean PLUS each
+# contributing model's individual forecast. Weight `0` disables a model.
+curl -s http://localhost:8080/v1/forecast/ensemble \
+  -H "Authorization: Bearer changeme" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "context": [[10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]],
+    "config": {"horizon": 5},
+    "weights": {"chronos-2": 2.0, "moirai-2": 1.0, "timesfm-2.5": 0}
+  }' | jq
+
+# List available models + their loaded/unloaded status
+curl -s http://localhost:8080/v1/models | jq
+```
+
+GPU variant: pull `psyb0t/predictalot:latest-cuda` and add `--gpus all` to `docker run`. CPU image is multi-arch (amd64+arm64); CUDA image is amd64-only.
+
+## The five models
+
+All five are univariate quantile forecasters on PyTorch. Behind one unified wire shape, predictalot translates each library's per-model quirks (output shapes, mask conventions, padding rules) into the same response format.
+
+| Slug | HF repo | What it is | Size | License |
+|---|---|---|---|---|
+| `chronos-2` | `amazon/chronos-2` | Amazon's tokenizer-based forecaster, configurable quantile output. Fastest of the five on CPU. | ~120 MB | Apache 2.0 |
+| `timesfm-2.5` | `google/timesfm-2.5-200m-pytorch` | Google Research's decoder-only model. Compile-time horizon cap. | ~200 MB | Apache 2.0 |
+| `moirai-2` | `Salesforce/moirai-2.0-R-small` | Salesforce's masked encoder. Fixed 9-quantile native output. Strong on clean seasonal data. | ~50 MB | CC-BY-NC-4.0 |
+| `toto-1` | `Datadog/Toto-Open-Base-1.0` | Datadog's decoder transformer trained on ~2T observability metric points. Probabilistic via Student-T mixture sampling (256 samples → empirical quantiles). Strong on noisy / financial / trendy series. | ~580 MB | Apache 2.0 |
+| `sundial-base-128m` | `thuml/sundial-base-128m` | Tsinghua's generative decoder-only with TimeFlow loss (flow-matching). ICML 2025 Oral, GIFT-Eval #1 MASE (May 2025). Runs in a **sidecar venv** because it pins `transformers==4.40` — see [Architecture: sidecar pattern](#architecture-sidecar-pattern). | ~490 MB | Apache 2.0 |
+
+## API — `/v1/forecast`
+
+### Request
+
+```json
+{
+  "model": "chronos-2",
+  "context": [[1.0, 2.0, 3.0, ...], [10.0, 11.0, ...]],
+  "config": {
+    "horizon": 24,
+    "quantileLevels": [0.1, 0.5, 0.9],
+    "contextLength": 2048
+  },
+  "unload": false
+}
+```
+
+| Field | Required | Default | Notes |
+|---|---|---|---|
+| `model` | yes | — | One of `chronos-2`, `timesfm-2.5`, `moirai-2`, `toto-1`, `sundial-base-128m`. Unknown slug → 404. |
+| `context` | yes | — | `List[List[float]]`. One inner list per series. Single-series = `[[...]]`. Variable-length series are zero/edge-padded per model. |
+| `config.horizon` | yes | — | Steps into the future to forecast. Per-model upper bounds (see Per-model quirks). |
+| `config.quantileLevels` | no | `[0.1, 0.5, 0.9]` | Subset of `{0.1, 0.2, ..., 0.9}` (the only levels every model supports). |
+| `config.contextLength` | no | per-model (2048 / 2048 / 4000 / 4096 / 2880) | Max history points to feed the model. Longer inputs sliced to the last N. |
+| `unload` | no | `false` | Tear down the model after this response (frees RAM/VRAM immediately). |
+
+### Response
+
+```json
+{
+  "model": "chronos-2",
+  "horizon": 24,
+  "quantileLevels": [0.1, 0.5, 0.9],
+  "median": [[...], [...]],
+  "quantiles": {
+    "0.1": [[...], [...]],
+    "0.5": [[...], [...]],
+    "0.9": [[...], [...]]
+  }
+}
+```
+
+`median` is always present — best-guess point forecast. If `quantileLevels` includes `0.5`, `quantiles["0.5"]` is identical to `median`.
+
+### Per-model quirks
+
+- **chronos-2** — native arbitrary-quantile output. No restrictions beyond `{0.1, ..., 0.9}`. Returns `list[Tensor]` (one per series, multivariate-shaped); we squeeze the channel axis for univariate output.
+- **timesfm-2.5** — compile-time `max_horizon` (default 512, must be multiple of 128). Request horizon > max → 400. Bump via `PREDICTALOT_TIMESFM_MAX_HORIZON` and restart. We bypass the library's built-in padding (mask=True path produces NaN at this commit) and edge-pad short inputs ourselves.
+- **moirai-2** — fixed 9-quantile output `{0.1..0.9}`; we filter to your requested subset. Wrapper context/horizon are baked at model-load time (`PREDICTALOT_MOIRAI_MAX_CONTEXT` / `_MAX_HORIZON`). Per-request inputs are zero-padded to the wrapper's context length with a `past_is_pad` mask.
+- **toto-1** — multivariate-native but we use it univariate. Quantiles via Monte-Carlo sampling (256 samples → empirical percentiles). Returns `[batch, channels, horizon]` shape; we squeeze leading dims.
+- **sundial-base-128m** — runs in its own sidecar process. From the API surface it's identical to the others. Generative sampling (`num_samples=64` by default, tune via `PREDICTALOT_SUNDIAL_NUM_SAMPLES`). First request waits for the sidecar to be reachable on its unix socket — usually <2s after container start.
+
+### Ensemble — `POST /v1/forecast/ensemble`
+
+Run multiple models in parallel and combine into a weighted-mean forecast. Returns the ensemble + every contributing model's individual forecast, so you can inspect dissent or post-process.
+
+```bash
+curl -s http://localhost:8080/v1/forecast/ensemble \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "context": [[1.0, 2.0, 3.0, 4.0, 5.0]],
+    "config": {"horizon": 5},
+    "weights": {
+      "chronos-2": 2.0,
+      "moirai-2": 1.0,
+      "timesfm-2.5": 0
+    }
+  }' | jq
+```
+
+Request shape — same as `/v1/forecast` minus `model`, plus an optional `weights` map:
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `weights` | `{slug: float}` | uniform 1.0 | Non-negative per-model weights. Normalized internally (any positive numbers work). Weight `0` skips that model entirely (not called — that's how you disable a model). Unknown slug → 400. Omitted entry → weight 1.0. |
+
+Response adds three fields on top of the standard forecast shape:
+
+| Field | What it is |
+|---|---|
+| `ensembleMembers` | List of slugs that actually ran (i.e. weight > 0). |
+| `weights` | The **normalized** weight per model that was applied to the average. |
+| `individual` | `{slug: full forecast result}` map — each entry has `model`, `horizon`, `quantileLevels`, `median`, `quantiles`, **and `weight`** (mirrors the top-level `weights[slug]`). |
+
+Failure of any one **included** model fails the whole call.
+
+### Error contract
+
+Two shapes — application errors return a human-readable string; Pydantic validation errors (422) return a structured array (FastAPI default; we don't flatten).
+
+**App errors** — `400`, `401`, `404`, `413`, `503`:
+
+```json
+{ "detail": "human-readable error string" }
+```
+
+**Validation errors** — `422` (wrong field type, missing required field, `horizon` not `> 0`, etc.):
+
+```json
+{
+  "detail": [
+    {
+      "type": "greater_than",
+      "loc": ["body", "config", "horizon"],
+      "msg": "Input should be greater than 0",
+      "input": 0
+    }
+  ]
+}
+```
+
+| Status | Shape | When |
+|---|---|---|
+| 400 | string | bad input (empty context, unsupported quantile level, horizon over compile-time cap, unknown weights slug) |
+| 401 | string | missing / wrong bearer token |
+| 404 | string | unknown model slug in `model` field |
+| 413 | string | request body > `PREDICTALOT_MAX_BODY_SIZE` |
+| 422 | array | Pydantic validation (field type / required / range constraints) |
+| 503 | string | model snapshot download failed, inference error, or sidecar worker unreachable |
+
+## MCP — `/mcp`
+
+Streamable-HTTP MCP server. Same auth as HTTP (bearer header or `?apiToken=...` query). Tools:
+
+| Tool | Args |
+|---|---|
+| `forecast_chronos_2` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=2048, unload=False` |
+| `forecast_timesfm_2_5` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=2048, unload=False` |
+| `forecast_moirai_2` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=4000, unload=False` |
+| `forecast_toto_1` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=4096, unload=False` |
+| `forecast_sundial_base_128m` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=2880, unload=False` |
+| `forecast_ensemble` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=None, weights=None, unload=False` |
+| `list_models` | none |
+
+Five named forecasting tools (not one polymorphic `forecast(model=...)`) — LLM agents discover and pick named capabilities more reliably than they pick an enum argument. `forecast_ensemble` accepts the same `weights` map as the HTTP route.
+
+## Configuration (env vars)
+
+| Var | Default | What it does |
+|---|---|---|
+| `PREDICTALOT_HOST` | `0.0.0.0` | uvicorn bind host |
+| `PREDICTALOT_PORT` | `8080` | uvicorn bind port |
+| `PREDICTALOT_AUTH_TOKENS` | (empty) | Comma-separated bearer tokens. Empty = open (refused at startup unless allow-no-auth). |
+| `PREDICTALOT_ALLOW_NO_AUTH` | `0` | Required to start with empty token list. |
+| `PREDICTALOT_DEVICE` | `auto` | `auto` / `cpu` / `cuda` / `cuda:N`. |
+| `PREDICTALOT_MODEL_DIR` | `/models` | Where snapshot directories land. Bind-mount this to persist across restarts. |
+| `PREDICTALOT_PREFETCH` | (empty) | Comma-separated slugs or `all` — prefetched at container start before uvicorn boots. |
+| `PREDICTALOT_PRELOAD` | (empty) | Comma-separated slugs to load into memory at boot. |
+| `PREDICTALOT_MODEL_IDLE_TIMEOUT` | `30m` | Idle time before a loaded model is unloaded. Go-style: `30m`, `1h`, `1d2h3m`. `0` disables. |
+| `PREDICTALOT_MODEL_IDLE_TIMEOUT_<SLUG>` | inherits global | Per-model override. Slug normalized: uppercase + `-`/`.` → `_` (e.g. `_MOIRAI_2`). |
+| `PREDICTALOT_MAX_BODY_SIZE` | `32mb` | Cap on request body. Human-readable: `32mb`, `512k`, `1g`, plain int = bytes. |
+| `PREDICTALOT_TIMESFM_MAX_CONTEXT` | `2048` | Compile-time max for TimesFM. Multiple of 32. |
+| `PREDICTALOT_TIMESFM_MAX_HORIZON` | `512` | Compile-time max for TimesFM. Multiple of 128. |
+| `PREDICTALOT_MOIRAI_MAX_CONTEXT` | `4000` | Wrapper context-length for Moirai-2. Per-request inputs zero-padded to this length. |
+| `PREDICTALOT_MOIRAI_MAX_HORIZON` | `512` | Wrapper prediction-length for Moirai-2. Per-request horizons must be ≤ this. |
+| `PREDICTALOT_SUNDIAL_SOCK` | `/tmp/predictalot/sundial.sock` | Unix-socket path the main service uses to talk to the sundial sidecar. |
+| `PREDICTALOT_SUNDIAL_NUM_SAMPLES` | `64` | Monte-Carlo samples per sundial forecast (more = smoother quantiles, linearly slower). |
+| `PREDICTALOT_SUNDIAL_READY_TIMEOUT` | `60s` | How long the main service waits for the sundial sidecar to come up on first request. |
+| `PREDICTALOT_LOG_LEVEL` | `INFO` | Standard Python log levels. |
+
+## Architecture: sidecar pattern
+
+Four of the five models (`chronos-2`, `timesfm-2.5`, `moirai-2`, `toto-1`) live in the **main Python venv** at `/opt/venv`. They share `torch==2.4.1`, `transformers==4.57.6`, etc. — a single resolved dependency tree.
+
+The fifth — `sundial-base-128m` — runs in its **own venv at `/opt/sundial-venv`** because Sundial's model code uses `transformers==4.40.1` internals (`DynamicCache.seen_tokens`, `get_max_length`, `get_usable_length`, plus a 4D-mask shape change) that were removed in transformers 4.42+. Shimming them from the outside breaks deeper inside transformers itself.
+
+```
+                  /tmp/predictalot/sundial.sock
+                              │
+┌──────────────────┐          │          ┌──────────────────┐
+│ main predictalot │ ─────────┴────────► │ sundial worker   │
+│ /opt/venv        │  httpx.AsyncClient  │ /opt/sundial-venv│
+│ transformers 4.57│  (unix-domain HTTP) │ transformers 4.40│
+│ chronos / timesfm│                     │ sundial deps     │
+│ moirai / toto    │                     │ FastAPI worker   │
+└──────────────────┘                     └──────────────────┘
+        ▲                                          ▲
+        │                                          │
+   uvicorn :8080                              uvicorn --uds
+   (public API)                            (internal only)
+```
+
+- The main service makes HTTP-over-UDS calls (`httpx.AsyncHTTPTransport(uds=...)`) to the sundial worker. From the main service's `models/sundial.py` it looks like any other backend (`get_model` waits for `/healthz`, `predict` POSTs to `/forecast`).
+- The sundial worker is its own tiny FastAPI app (`sundial_worker/server.py`) — loads the model lazily, serves `/forecast`, exposes `/healthz`.
+- The container's entrypoint starts the sundial worker as a background process with an auto-restart loop. If the worker crashes (OOM, ImportError, whatever) the loop relaunches it within ~2 seconds; mid-restart requests get 503 until it's back.
+
+**This pattern is reusable.** Any future model with version conflicts that can't be shimmed drops in the same way: create `/opt/<name>-venv` with its own deps, write `<name>_worker/server.py`, add a thin `models/<name>.py` in the main service that talks to it via httpx-over-UDS, register in the entrypoint's restart loop.
+
+Trade-offs:
+- ✅ Clean dep isolation — Python import conflicts are impossible across venvs.
+- ✅ Reusable pattern for the next conflicted model.
+- ❌ Image size: sundial venv is ~2GB on its own (its own torch + transformers + numpy). Couldn't share via symlinks because uv's resolver clobbers them on dep updates.
+- ❌ Two processes per container — small operational complexity, visible in `ps`.
+
+## Accuracy & latency
+
+Numbers from `make bench` against `psyb0t/predictalot-test:cuda` on an RTX 3060. Lower sMAPE = better forecast. Latency is round-trip wall-clock per single-series forecast (after warmup, single-series in the request body).
+
+### Accuracy (sMAPE %)
+
+Three classic academic benchmarks:
+
+| Dataset (horizon) | seasonal-naive | chronos-2 | timesfm-2.5 | moirai-2 | toto-1 | sundial | ens uniform |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| AirPassengers (h=24, n=144 monthly) | 17.01 | 8.26 | 12.42 | **7.71** | 19.88 | 16.57 | 12.75 |
+| Shampoo Sales (h=6, n=36 monthly) | **25.54** | 27.24 | 40.37 | 33.74 | 24.27 | 42.07 | 32.07 |
+| Daily-Min-Temperatures (h=30, n=1460 daily) | 17.72 | 13.23 | 13.65 | 13.77 | 13.76 | **12.72** | 13.30 |
+
+Three real-world benchmarks fetched live by `make bench`:
+
+| Dataset (horizon) | seasonal-naive | chronos-2 | timesfm-2.5 | moirai-2 | toto-1 | sundial | ens uniform |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| CO2 Mauna Loa (h=24, n=818 monthly) | 1.05 | 0.24 | 0.16 | 0.13 | **0.09** | 0.58 | 0.17 |
+| Gold PAXG/USDT (h=30, n=1000 daily) | 2.18 | 3.26 | 2.67 | 3.12 | 3.58 | **1.67** | 2.81 |
+| BTC/USDT (h=30, n=1000 daily) | 3.18 | 2.74 | 2.75 | 5.00 | **2.02** | 2.91 | 2.98 |
+
+### Honest takeaways
+
+1. **No single model dominates real-world data.** Each model wins on at least one dataset, and which one depends on the signal shape: moirai on clean seasonal, toto on observability-style noisy series, sundial on financial drift, chronos as a steady all-rounder. **Toto-1 wins on CO2 + BTC + Shampoo** (its training distribution favors trendy/noisy series). **Sundial wins on Gold + Daily Temps**. **Moirai wins on AirPassengers**.
+
+2. **Uniform ensemble loses to the right single model on every real-world dataset.** Averaging with a model that has the wrong inductive bias drags the mean down. Pick `weights` per-domain when you know what fits.
+
+3. **TimesFM 2.5 is the weakest of the five on every dataset we tested** — slowest AND worst or near-worst sMAPE. Consider setting `"weights": {"timesfm-2.5": 0}` in ensemble calls until a newer release ships.
+
+4. **`ens no-timesfm`** (`{"chronos-2": 1, "timesfm-2.5": 0, "moirai-2": 1, "toto-1": 1, "sundial-base-128m": 1}`) is a strong "I don't know which model fits" default.
+
+5. **Foundation models don't beat the market.** Best result on BTC (toto-1 at 2.02% sMAPE vs naive 3.18%) is real but tiny — definitely not "trade on this" predictive.
+
+6. **For comparison:** hand-tuned ARIMA on AirPassengers gets ~3-5% sMAPE. predictalot's best on that dataset is moirai-2 at 7.71% sMAPE — competitive zero-shot, no per-series fitting.
+
+### Latency per single-series forecast
+
+| Model | CPU (ms) | CUDA RTX 3060 (ms) | speedup |
+|---|---:|---:|---:|
+| chronos-2 | 60–180 | 24–35 | ~3-6× |
+| timesfm-2.5 | 1240–1300 | 320–340 | ~3.7× |
+| moirai-2 | 4200–4950 | 215–230 | ~20× |
+| toto-1 | (large) | 45–435 | varies w/ context length |
+| sundial-base-128m | (sidecar) | 65–85 | very fast on GPU |
+| ensemble (N parallel) | ≈ slowest member | ≈ slowest member | ≈ slowest |
+
+Cold-load (first request after container start):
+
+| Model | CPU | CUDA |
+|---|---:|---:|
+| chronos-2 | ~4.1s | ~32 ms |
+| timesfm-2.5 | ~3.0s | ~2.3s |
+| moirai-2 | ~4.9s | ~720 ms |
+| toto-1 | (large) | ~1.5s |
+| sundial-base-128m | (sidecar boot ~1s + load ~7s) | (sidecar boot ~1s + load ~3s) |
+
+CPU↔GPU produces near-identical forecasts (float rounding noise only) — running on CPU isn't an accuracy regression, just a latency one.
+
+Run the bench yourself against a live container:
+
+```bash
+make bench                                                 # localhost:18080, devtok
+PREDICTALOT_BENCH_URL=http://remote:8080 \
+PREDICTALOT_BENCH_TOKEN=mytoken make bench                 # remote, custom token
+```
+
+## CPU vs CUDA images
+
+| Image | Tag | Platforms | Notes |
+|---|---|---|---|
+| CPU | `psyb0t/predictalot:latest` | amd64, arm64 | PyTorch CPU wheels. Works on any host. |
+| CUDA | `psyb0t/predictalot:latest-cuda` | amd64 only | PyTorch CUDA 12.4 wheels on CUDA 12.6 runtime base. Needs `--gpus all` + NVIDIA driver on host. CUDA on arm64 is a different stack (Jetson L4T / SBSA) and not on the menu. |
+
+Both images are self-sufficient — same source, same API, same env vars. Pick the one that matches your host. The CUDA image also runs on CPU if `--gpus` isn't passed (useful for debugging).
+
+Image sizes (approximate, compressed):
+- CPU: ~3 GB
+- CUDA: ~9 GB (PyTorch CUDA wheels are 2GB+ on their own; sundial sidecar adds ~2GB)
+
+## Development
+
+Everything runs in a sandboxed dev container — your host needs only `docker`, `make`, `git`, and a shell. Optionally `uv` if you want to run `make test-integration` / `make bench` directly from the host.
+
+```bash
+make help            # list all targets
+make dev-image       # build the dev container (run once, rebuilt on lock changes)
+make test            # unit tests with stubbed backends — fast + offline (no ML libs needed)
+make lint            # flake8 + mypy inside the dev container
+make format          # isort + black inside the dev container
+
+make pkg-add PKG=foo==1.2.3   # add a dep (bumps exclude-newer first)
+make pkg-upgrade              # bump exclude-newer + refresh all pins
+make deps-lock          # regenerate requirements-{cpu,cuda}.txt (hash-locked)
+
+make build           # build CPU production image
+make build-cuda      # build CUDA production image
+make build-all       # both
+make run             # build + run CPU image with a dev token
+make run-cuda        # build + run CUDA image with --gpus all
+
+make test-integration  # build the prod image, run it, hit it with real ML calls
+make bench             # accuracy + latency benchmark on real public datasets
+```
+
+`make test-integration` auto-detects CUDA (via `docker info | grep nvidia`) and uses the matching image with `--gpus all` if available. Models cache to `tests/integration/.fixtures/models/` (gitignored). 14 integration tests cover every model + ensemble + per-quantile-level + unload flag + CUDA detection.
+
+`make bench` requires a running container reachable at `PREDICTALOT_BENCH_URL` (default `http://127.0.0.1:18080`) with bearer token in `PREDICTALOT_BENCH_TOKEN` (default `devtok`). Compares each individual model against the seasonal-naive baseline and several weighted-ensemble variants on six datasets (three academic + three real-world public APIs: NOAA CO2, Binance gold/BTC).
+
+`make pkg-*` targets follow the supply-chain age-gate pattern: every dep mutation bumps `[tool.uv] exclude-newer` to today's UTC midnight first, so brand-new (potentially compromised) package versions are refused at install time.
+
+### Test counts
+
+- **Unit tests**: 83 (stubbed backends, fast, offline)
+- **Integration tests**: 14 (real Docker image, real ML calls, opt-in via `-m integration`)
+
+## Security notes
+
+Every dependency is exactly pinned with hash verification where possible:
+- Lightweight runtime deps live in `uv.lock` (hash-verified).
+- ML stack lives in `requirements-{cpu,cuda}.txt` (hash-verified, installed with `--require-hashes`).
+- Sundial sidecar deps live in `requirements-sundial.txt` (manually pinned).
+- Base images pinned by `@sha256:...` digest.
+- `timesfm` is a git install pinned by full 40-char commit SHA.
+- `[tool.uv] exclude-newer` refuses to install package versions newer than the gate date, blocking same-day supply-chain attacks at lockfile generation time.
+
+Pinned versions of `torch` and `transformers` have open CVEs in OSV. Each was reviewed against the predictalot threat model and confirmed non-applicable:
+
+| Library | Class of advisory | Why it doesn't apply here |
+|---|---|---|
+| `torch` | `torch.load()` RCE / deserialization | We never call `torch.load()` on untrusted files. Weights come from HuggingFace via `snapshot_download` from hardcoded official org repos. |
+| `torch` | `RemoteModule` RCE | We don't use distributed `RemoteModule`. |
+| `torch` | Local DoS in specific ops (`PairwiseDistance`, `cummin`, `lu`, etc.) | The five backends use Transformers/standard math paths, not the affected ops. |
+| `torch` | Advisories listing "Affects 2.6.0/2.7.0/2.8.0" | OSV range-matches these back to 2.4.1; descriptions confirm the regressions were introduced in 2.6+. False-positive against our pin. |
+| `transformers` | `Trainer` arbitrary code exec | We only do inference. No `Trainer`. |
+| `transformers` | Per-model deserialization/conversion RCE (Perceiver, Transformer-XL, X-CLIP, GLM4, SEW, HuBERT, megatron_gpt2) | We load Chronos (T5-based) only via the chronos-forecasting package. None of those model classes is loaded. |
+
+**Why not bump past the CVE-fixing versions?** `uni2ts==2.0.0` caps `torch<2.5`; the torch fix line for the most cited issue (GHSA-53q9-r3pm-6pq6, `weights_only=True` RCE) is `2.6.0`. Until uni2ts releases a newer version with torch>=2.5 support, we can't move. Same constraint forces transformers `<5` (chronos cap) — and the open transformers CVEs are all about loading untrusted model files or running training, neither of which predictalot does.
+
+**Sundial sidecar venv** pins `transformers==4.40.1`, which has its own CVE set. Same threat model applies — sundial loads only the hardcoded `thuml/sundial-base-128m` checkpoint via `snapshot_download` from HF and does inference, no Trainer, no arbitrary model conversion.
+
+If you point `PREDICTALOT_MODEL_DIR` at a directory containing **arbitrary user-provided model weights**, you're on your own — predictalot's auto-fetch only writes to `MODEL_DIR/<slug>/` from the hardcoded HuggingFace repo ids; there's no API surface that takes a model path.
+
+Run `osv-scanner` against the image before deployment if you want a fresh advisory check.
+
+## Roadmap / not yet supported
+
+- **Multivariate forecasting** — joint forecast over correlated series (e.g. `[temperature, humidity, pressure]` together). Currently univariate only. Chronos-2, Moirai-2, and Toto-1 all support multivariate natively; just need wire-shape work.
+- **Covariates** — past + future side-info that improves the target forecast. Two flavors: past covariates (e.g. yesterday's foot traffic) and future covariates (e.g. is_holiday flag known into the forecast window). Chronos-2 supports both, Moirai-2 supports past.
+- **Big-context uploads** — multipart `form-data` or binary body when JSON-32MB isn't enough. Defaults are sized for normal-shape workloads.
+- **Pre-baked weights** — build-arg option to bake selected models into the image for airgapped deploys. Currently weights are runtime-downloaded.
+- **Toto-2.0** (released April 2026) — newer architecture, top-3 on GIFT-Eval CRPS. Blocked by torch 2.5+ requirement (uni2ts cap). Watch for PyPI packaging; currently git-only.
+- **More sidecar models** — the pattern is in place; adding e.g. ibm-granite's TTM-r2 or FlowState requires a new venv + worker module, no architectural change.
+
+## License
+
+WTFPL — Do What The Fuck You Want To Public License. See `LICENSE`.

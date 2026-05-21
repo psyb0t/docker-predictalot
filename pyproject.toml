@@ -1,0 +1,99 @@
+[project]
+name = "predictalot"
+version = "0.1.0"
+description = "FastAPI wrapper exposing 3 foundation time-series forecasters (Chronos-2, TimesFM 2.5, Moirai-2) under a unified API"
+license = { text = "WTFPL" }
+requires-python = ">=3.12"
+authors = [{ name = "psyb0t" }]
+keywords = [
+    "time-series",
+    "forecasting",
+    "chronos",
+    "timesfm",
+    "moirai",
+    "foundation-model",
+    "fastapi",
+    "mcp",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Lightweight runtime deps only — the heavy ML stack (torch, chronos-forecasting,
+# uni2ts, timesfm, transformers, accelerate, etc.) is installed via the
+# Dockerfile because:
+#   1. torch flavor (CPU vs CUDA) is chosen by --index-url at install time,
+#      not lockable in a single uv.lock that targets both images
+#   2. timesfm 2.5 has no PyPI release — installed from git with --no-deps
+#   3. uni2ts caps torch<2.5 conservatively; we install adjacent ML libs
+#      explicitly to dodge the resolver thrashing on every change
+dependencies = [
+    "fastapi==0.136.1",
+    "uvicorn==0.47.0",
+    "pydantic==2.13.4",
+    "mcp==1.27.1",
+    # huggingface-hub 0.x — staying on 0.36.2 (latest 0.x). 1.x removed
+    # `local_dir_use_symlinks` and other params; will migrate when uni2ts
+    # bumps its >=0.23 floor and the rest of the ecosystem follows.
+    "huggingface-hub==0.36.2",
+    # numpy pinned to 1.26.x because uni2ts==2.0.0 caps numpy~=1.26.0.
+    # When uni2ts releases >2.0.0 with numpy>=2 support we can bump.
+    "numpy==1.26.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/psyb0t/docker-predictalot"
+Issues = "https://github.com/psyb0t/docker-predictalot/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/predictalot"]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.3",
+    "pytest-asyncio==1.3.0",
+    "pytest-cov==5.0.0",
+    "httpx==0.28.1",
+    "black==24.10.0",
+    "isort==5.13.2",
+    "flake8==7.1.1",
+    "mypy==1.13.0",
+]
+
+[tool.uv]
+# Supply-chain defense: only install pkg versions older than `exclude-newer`.
+# Bumped by `make pkg-*` targets before any dep mutation. UTC midnight.
+exclude-newer = "2026-05-19T00:00:00Z"
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# Default skips integration tests (which need Docker + are slow).
+# Run them explicitly via `make test-integration` or `pytest -m integration`.
+addopts = "-v --tb=short -m 'not integration' --ignore=.research_files"
+norecursedirs = [".research_files", ".venv", "build", "dist", ".pytest_cache"]
+markers = [
+    "integration: end-to-end tests that build + run the Docker image (Docker required, slow, opt-in via -m integration)",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
