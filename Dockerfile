@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
 #
 # CPU image — Ubuntu base + PyTorch CPU wheels + the three forecasters.
-# Multi-arch: linux/amd64, linux/arm64 (PyTorch CPU wheels ship for both).
+# linux/amd64 only — pytorch.org's CPU index ships torch==2.4.1+cpu wheels for
+# linux_x86_64 + win_amd64; no manylinux aarch64 wheel at this pinned version.
 #
 # Heavy ML deps are installed explicitly in the runtime stage, not via
 # `uv sync`, because torch's --index-url and timesfm's git-only release make

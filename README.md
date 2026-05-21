@@ -43,7 +43,7 @@ curl -s http://localhost:8080/v1/forecast/ensemble \
 curl -s http://localhost:8080/v1/models | jq
 ```
 
-GPU variant: pull `psyb0t/predictalot:latest-cuda` and add `--gpus all` to `docker run`. CPU image is multi-arch (amd64+arm64); CUDA image is amd64-only.
+GPU variant: pull `psyb0t/predictalot:latest-cuda` and add `--gpus all` to `docker run`. Both CPU and CUDA images are amd64-only (PyTorch's CPU wheel index has no aarch64 build at the pinned version).
 
 ## The five models
 
@@ -322,7 +322,7 @@ PREDICTALOT_BENCH_TOKEN=mytoken make bench                 # remote, custom toke
 
 | Image | Tag | Platforms | Notes |
 |---|---|---|---|
-| CPU | `psyb0t/predictalot:latest` | amd64, arm64 | PyTorch CPU wheels. Works on any host. |
+| CPU | `psyb0t/predictalot:latest` | amd64 only | PyTorch CPU wheels (pytorch.org's CPU index has no manylinux aarch64 wheel at the pinned `torch==2.4.1+cpu`). |
 | CUDA | `psyb0t/predictalot:latest-cuda` | amd64 only | PyTorch CUDA 12.4 wheels on CUDA 12.6 runtime base. Needs `--gpus all` + NVIDIA driver on host. CUDA on arm64 is a different stack (Jetson L4T / SBSA) and not on the menu. |
 
 Both images are self-sufficient — same source, same API, same env vars. Pick the one that matches your host. The CUDA image also runs on CPU if `--gpus` isn't passed (useful for debugging).

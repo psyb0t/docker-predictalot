@@ -8,12 +8,12 @@ jobs:
 
     with:
       repository_name: psyb0t/predictalot
-      target_platforms: "linux/amd64,linux/arm64"
+      target_platforms: "linux/amd64"
       scan_severity: "high"
       cache_mode: "min"
       build_targets: |
         [
-          {"file": "Dockerfile",      "tag_suffix": ""},
+          {"file": "Dockerfile",      "tag_suffix": "",      "platforms": "linux/amd64"},
           {"file": "Dockerfile.cuda", "tag_suffix": "-cuda", "platforms": "linux/amd64"}
         ]
 
