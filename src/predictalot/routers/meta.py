@@ -1,7 +1,7 @@
-"""GET /healthz and GET /v1/models.
+"""GET /healthz — unauthenticated liveness probe.
 
-Both routes are unauthenticated by design — operators need them to monitor
-the service. /v1/models doesn't leak anything sensitive (slugs are public).
+Per-type model listings now live under /v1/<type>/models (one per type
+router); the unified /v1/models that existed in v0.1 is gone.
 """
 
 from __future__ import annotations
@@ -10,27 +10,9 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from .. import config, models
-
 router = APIRouter(tags=["meta"])
 
 
 @router.get("/healthz")
 def healthz() -> dict[str, Any]:
     return {"ok": True}
-
-
-@router.get("/v1/models")
-def list_models() -> dict[str, Any]:
-    out = []
-    for slug in config.MODEL_SLUGS:
-        backend = models.get(slug)
-        out.append(
-            {
-                "slug": slug,
-                "loaded": backend.loaded(),
-                "lastUsedSecsAgo": backend.last_used_secs_ago(),
-                "idleTimeoutSecs": config.idle_timeout_for(slug),
-            }
-        )
-    return {"models": out}

@@ -34,8 +34,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock* ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --python /usr/bin/python3.12 \
-    || uv sync --no-dev --python /usr/bin/python3.12
+    uv sync --frozen --no-dev --python /usr/bin/python3.12
 
 # Heavy ML deps — hash-locked. torch is the cu124 build (cu126 wheels start
 # at torch 2.5; uni2ts caps us at torch<2.5, so we use cu124. CUDA runtimes

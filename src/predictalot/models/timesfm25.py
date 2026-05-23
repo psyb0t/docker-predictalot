@@ -4,6 +4,9 @@ Compile-time max_horizon (multiple of 128) + max_context (multiple of 32) are
 baked in; per-request horizon over max_horizon → 400. Native output is 9
 fixed quantiles (0.1..0.9) — we filter to the requested subset. Channel 0 of
 the quantile_forecast is the point/median forecast.
+
+Supported types: univariate only — TimesFM 2.5 has no native multivariate,
+covariate, or sample-paths interface.
 """
 
 from __future__ import annotations
@@ -14,9 +17,11 @@ import logging
 import time
 from typing import Any
 
-from .. import config, storage
+from .. import config, storage, types
 
 SLUG = "timesfm-2.5"
+
+SUPPORTED_TYPES: frozenset[str] = frozenset({types.TYPE_UNIVARIATE})
 
 log = logging.getLogger(f"predictalot.models.{SLUG}")
 
@@ -24,7 +29,6 @@ _lock = asyncio.Lock()
 _model: Any = None
 _last_used: float | None = None
 
-# Native quantile channels in the timesfm output (indices 1..9 of quantile_forecast)
 _NATIVE_QUANTILES: tuple[float, ...] = tuple(round(0.1 * i, 1) for i in range(1, 10))
 
 
@@ -68,19 +72,11 @@ def _load_model_sync(path: str) -> Any:
     import timesfm
     from timesfm import ForecastConfig
 
-    # Bypass timesfm.TimesFM_2p5_200M_torch.from_pretrained — huggingface_hub
-    # 0.36+ passes `proxies` through to the model `__init__`, but TimesFM's
-    # __init__ doesn't accept it → TypeError. Load via the model's own
-    # `load_checkpoint` (reads the safetensors file directly).
     snapshot = Path(path)
     with open(snapshot / "config.json") as f:
         model_config = json.load(f)
 
     model = timesfm.TimesFM_2p5_200M_torch(config=model_config, torch_compile=False)
-    # The wrapper's `load_checkpoint` is a NotImplementedError stub —
-    # the actual weight loader lives on `wrapper.model.load_checkpoint`
-    # (the inner nn.Module). Mirrors what timesfm's `_from_pretrained`
-    # does internally after constructing the wrapper.
     model.model.load_checkpoint(
         str(snapshot / "model.safetensors"), torch_compile=False
     )
@@ -116,7 +112,7 @@ async def unload() -> None:
         pass
 
 
-async def predict(
+async def predict_univariate(
     context: list[list[float]],
     horizon: int,
     quantile_levels: list[float],
@@ -145,16 +141,6 @@ def _predict_sync(
 ) -> dict[str, Any]:
     import numpy as np
 
-    # Bypass model.forecast() — its built-in short-input handling sets a
-    # boolean mask on padded positions, and the inner module produces NaN
-    # outputs when any mask=True positions are present (mask=True path is
-    # broken in timesfm @d720daa with the published 2.5 checkpoint).
-    #
-    # Workaround: pad short inputs ourselves with `mode='edge'` (replicate
-    # the first observed value), pass an all-False mask, and call
-    # `compiled_decode(horizon, values, masks)` directly. Edge-padded data
-    # gives the model an "honest" constant prefix that adds no spurious
-    # signal — the model can attend over it but it carries no trend info.
     wrapper_ctx = model.forecast_config.max_context
 
     values, masks = [], []
@@ -169,8 +155,6 @@ def _predict_sync(
         masks.append(np.zeros(wrapper_ctx, dtype=bool))
 
     point_forecast, quantile_forecast = model.compiled_decode(horizon, values, masks)
-    # point_forecast: [B, H]; quantile_forecast: [B, H, 10] where channel 0 is
-    # the point (~= median) and channels 1..9 are q=0.1..0.9.
     q_arr = np.asarray(quantile_forecast)
     median = np.asarray(point_forecast).tolist()
 
@@ -182,7 +166,7 @@ def _predict_sync(
             raise ValueError(
                 f"timesfm-2.5: quantile level {q_level} not in supported set {_NATIVE_QUANTILES}"
             ) from exc
-        out_quantiles[_quantile_key(q_level)] = [
+        out_quantiles[_qkey(q_level)] = [
             q_arr[b, :, channel].tolist() for b in range(q_arr.shape[0])
         ]
 
@@ -195,5 +179,5 @@ def _predict_sync(
     }
 
 
-def _quantile_key(q: float) -> str:
+def _qkey(q: float) -> str:
     return f"{q:.1f}"

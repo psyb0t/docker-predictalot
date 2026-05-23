@@ -1,25 +1,27 @@
 """Model backends — one module per supported model slug.
 
 Each module exposes:
-    async def predict(context, horizon, quantile_levels, context_length, unload) -> dict
-    async def get_model() -> object  # lazy loader, idempotent
-    async def unload() -> None
-    def loaded() -> bool
-    def last_used_secs_ago() -> float | None
+    SLUG: str
+    SUPPORTED_TYPES: frozenset[str]  — see predictalot.types
+    async get_model() -> object       — lazy loader, idempotent
+    async unload() -> None
+    def  loaded() -> bool
+    def  last_used_secs_ago() -> float | None
+    plus a `predict_<type>` async function for each SUPPORTED_TYPES member
+    (see predictalot.types for the matrix).
 
-The forecast dispatcher imports them by slug.
+Returned as `Any` from `get()` because each backend exposes a different set of
+per-type predict functions; the dispatcher knows which one to call based on the
+type slug.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .base import ModelBackend
+from typing import Any
 
 from . import chronos2, moirai2, sundial, timesfm25, toto1
 
-BACKENDS: dict[str, "ModelBackend"] = {
+BACKENDS: dict[str, Any] = {
     "chronos-2": chronos2,
     "timesfm-2.5": timesfm25,
     "moirai-2": moirai2,
@@ -28,6 +30,6 @@ BACKENDS: dict[str, "ModelBackend"] = {
 }
 
 
-def get(slug: str) -> "ModelBackend":
+def get(slug: str) -> Any:
     """Return the backend module for a model slug. KeyError if unknown."""
     return BACKENDS[slug]

@@ -1,12 +1,12 @@
 # predictalot
 
-> One HTTP endpoint, five foundation time-series forecasters, zero ceremony.
+> One HTTP service, six forecast types, five foundation time-series models, zero ceremony.
 
-`POST /v1/forecast` with `{"model": "chronos-2", "context": [[...]], "config": {"horizon": 24}}` → quantile forecast back. Swap the slug — `chronos-2`, `timesfm-2.5`, `moirai-2`, `toto-1`, `sundial-base-128m` — and the wire shape stays identical.
+`POST /v1/univariate/forecast` with `{"model": "chronos-2", "context": [[...]], "config": {"horizon": 24}}` → quantile forecast back. Swap the slug — `chronos-2`, `timesfm-2.5`, `moirai-2`, `toto-1`, `sundial-base-128m` — and the wire shape stays identical.
 
-For weighted combinations: `POST /v1/forecast/ensemble` runs multiple models in parallel and returns a weighted-mean forecast plus each contributing model's individual result. Per-model `weights` let you tune the mix (set a model's weight to `0` to skip it entirely).
+Need richer modalities? Same wire family, different URL prefix: `/v1/multivariate`, `/v1/covariates/past`, `/v1/covariates/future`, `/v1/covariates`, `/v1/samples`. Each type advertises its own member-model list at `/v1/<type>/models`, accepts forecasts at `/v1/<type>/forecast`, and exposes a per-type ensemble at `/v1/<type>/forecast/ensemble`. A model either belongs to a type or it doesn't — no silent "this slug can't actually do that".
 
-MCP streamable-http server at `/mcp` exposes five named forecast tools (`forecast_chronos_2`, `forecast_timesfm_2_5`, `forecast_moirai_2`, `forecast_toto_1`, `forecast_sundial_base_128m`) plus `forecast_ensemble` and `list_models`.
+MCP streamable-http server at `/mcp` exposes one named tool per (type, model) cell — `forecast_univariate_chronos_2`, `forecast_multivariate_moirai_2`, `forecast_samples_toto_1`, etc. — plus a per-type `forecast_<type>_ensemble` and `list_<type>_models`. 26 tools total.
 
 ## Quick start
 
@@ -19,7 +19,7 @@ docker run -d --name predictalot \
 
 # First call to a model downloads its weights into /models (~50-800MB each).
 # Subsequent calls are fast. Bind-mount /models to persist across restarts.
-curl -s http://localhost:8080/v1/forecast \
+curl -s http://localhost:8080/v1/univariate/forecast \
   -H "Authorization: Bearer changeme" \
   -H "Content-Type: application/json" \
   -d '{
@@ -28,9 +28,10 @@ curl -s http://localhost:8080/v1/forecast \
     "config": {"horizon": 5}
   }' | jq
 
-# Ensemble — run several models in parallel, get a weighted mean PLUS each
-# contributing model's individual forecast. Weight `0` disables a model.
-curl -s http://localhost:8080/v1/forecast/ensemble \
+# Ensemble — run several univariate models in parallel, get a weighted mean
+# PLUS each contributing model's individual forecast. Weight `0` disables a
+# model.
+curl -s http://localhost:8080/v1/univariate/forecast/ensemble \
   -H "Authorization: Bearer changeme" \
   -H "Content-Type: application/json" \
   -d '{
@@ -39,25 +40,49 @@ curl -s http://localhost:8080/v1/forecast/ensemble \
     "weights": {"chronos-2": 2.0, "moirai-2": 1.0, "timesfm-2.5": 0}
   }' | jq
 
-# List available models + their loaded/unloaded status
-curl -s http://localhost:8080/v1/models | jq
+# Which models implement each type (and their loaded/unloaded status)
+curl -s http://localhost:8080/v1/univariate/models | jq
+curl -s http://localhost:8080/v1/multivariate/models | jq
+curl -s http://localhost:8080/v1/covariates/past/models | jq
+curl -s http://localhost:8080/v1/covariates/future/models | jq
+curl -s http://localhost:8080/v1/covariates/models | jq
+curl -s http://localhost:8080/v1/samples/models | jq
 ```
 
 GPU variant: pull `psyb0t/predictalot:latest-cuda` and add `--gpus all` to `docker run`. Both CPU and CUDA images are amd64-only (PyTorch's CPU wheel index has no aarch64 build at the pinned version).
 
 ## The five models
 
-All five are univariate quantile forecasters on PyTorch. Behind one unified wire shape, predictalot translates each library's per-model quirks (output shapes, mask conventions, padding rules) into the same response format.
+All five are PyTorch foundation forecasters trained for zero-shot use. Each one's *capabilities* (univariate-only / multivariate / past-covariate / future-covariate / samples) differ — that capability matrix is what drives the per-type URL family below.
 
 | Slug | HF repo | What it is | Size | License |
 |---|---|---|---|---|
-| `chronos-2` | `amazon/chronos-2` | Amazon's tokenizer-based forecaster, configurable quantile output. Fastest of the five on CPU. | ~120 MB | Apache 2.0 |
-| `timesfm-2.5` | `google/timesfm-2.5-200m-pytorch` | Google Research's decoder-only model. Compile-time horizon cap. | ~200 MB | Apache 2.0 |
-| `moirai-2` | `Salesforce/moirai-2.0-R-small` | Salesforce's masked encoder. Fixed 9-quantile native output. Strong on clean seasonal data. | ~50 MB | CC-BY-NC-4.0 |
-| `toto-1` | `Datadog/Toto-Open-Base-1.0` | Datadog's decoder transformer trained on ~2T observability metric points. Probabilistic via Student-T mixture sampling (256 samples → empirical quantiles). Strong on noisy / financial / trendy series. | ~580 MB | Apache 2.0 |
-| `sundial-base-128m` | `thuml/sundial-base-128m` | Tsinghua's generative decoder-only with TimeFlow loss (flow-matching). ICML 2025 Oral, GIFT-Eval #1 MASE (May 2025). Runs in a **sidecar venv** because it pins `transformers==4.40` — see [Architecture: sidecar pattern](#architecture-sidecar-pattern). | ~490 MB | Apache 2.0 |
+| `chronos-2` | `amazon/chronos-2` | Amazon's tokenizer-based forecaster, configurable quantile output. Fastest of the five on CPU. The only model that handles both past AND future covariates. | ~120 MB | Apache 2.0 |
+| `timesfm-2.5` | `google/timesfm-2.5-200m-pytorch` | Google Research's decoder-only model. Compile-time horizon cap. Univariate-only. | ~200 MB | Apache 2.0 |
+| `moirai-2` | `Salesforce/moirai-2.0-R-small` | Salesforce's masked encoder. Native multivariate + past-covariate support. Fixed 9-quantile native output. Strong on clean seasonal data. | ~50 MB | CC-BY-NC-4.0 |
+| `toto-1` | `Datadog/Toto-Open-Base-1.0` | Datadog's decoder transformer trained on ~2T observability metric points. Probabilistic via Student-T mixture sampling. Native multivariate; exposes raw sample paths. Strong on noisy / financial / trendy series. | ~580 MB | Apache 2.0 |
+| `sundial-base-128m` | `thuml/sundial-base-128m` | Tsinghua's generative decoder-only with TimeFlow loss (flow-matching). ICML 2025 Oral, GIFT-Eval #1 MASE (May 2025). Exposes raw sample paths. Runs in a **sidecar venv** because it pins `transformers==4.40` — see [Architecture: sidecar pattern](#architecture-sidecar-pattern). | ~490 MB | Apache 2.0 |
 
-## API — `/v1/forecast`
+## Forecast types — the capability matrix
+
+Each row is one URL prefix. The members column lists which model slugs implement that type — those are the only slugs accepted by `<type>/forecast` and the only ones included in `<type>/forecast/ensemble`.
+
+| Type | Base URL | Members | Request shape | Response shape |
+|---|---|---|---|---|
+| univariate | `/v1/univariate` | chronos-2, timesfm-2.5, moirai-2, toto-1, sundial-base-128m | `context: float[series][time]` | quantiles per series |
+| multivariate | `/v1/multivariate` | chronos-2, moirai-2, toto-1 | `context: float[series][channel][time]` | quantiles per (series, channel) |
+| covariates (past only) | `/v1/covariates/past` | chronos-2, moirai-2 | univariate target + `pastCovariates: list[dict[name, float[time]]]` | quantiles per series |
+| covariates (future only) | `/v1/covariates/future` | chronos-2 | univariate target + `futureCovariates: list[dict[name, float[horizon]]]` | quantiles per series |
+| covariates (past + future) | `/v1/covariates` | chronos-2 | univariate target + `pastCovariates` + `futureCovariates` | quantiles per series |
+| samples | `/v1/samples` | toto-1, sundial-base-128m | univariate target + `numSamples` | `samples: float[series][sample][time]` (raw paths) |
+
+Every base URL exposes the same three sub-paths: `<base>/forecast`, `<base>/forecast/ensemble`, `<base>/models`.
+
+**Cross-combos deferred** (multivariate-covariates, multivariate-samples) — chronos-2 + toto-1 can do them natively; ship as separate types in v0.3 if asked.
+
+## API — univariate (`/v1/univariate/forecast`)
+
+The smallest and most common shape: one or more 1D series, return quantile forecasts.
 
 ### Request
 
@@ -76,7 +101,7 @@ All five are univariate quantile forecasters on PyTorch. Behind one unified wire
 
 | Field | Required | Default | Notes |
 |---|---|---|---|
-| `model` | yes | — | One of `chronos-2`, `timesfm-2.5`, `moirai-2`, `toto-1`, `sundial-base-128m`. Unknown slug → 404. |
+| `model` | yes | — | One of `chronos-2`, `timesfm-2.5`, `moirai-2`, `toto-1`, `sundial-base-128m`. Unknown slug → 404; not-a-univariate-member (impossible currently — all five support it) → 400. |
 | `context` | yes | — | `List[List[float]]`. One inner list per series. Single-series = `[[...]]`. Variable-length series are zero/edge-padded per model. |
 | `config.horizon` | yes | — | Steps into the future to forecast. Per-model upper bounds (see Per-model quirks). |
 | `config.quantileLevels` | no | `[0.1, 0.5, 0.9]` | Subset of `{0.1, 0.2, ..., 0.9}` (the only levels every model supports). |
@@ -99,22 +124,14 @@ All five are univariate quantile forecasters on PyTorch. Behind one unified wire
 }
 ```
 
-`median` is always present — best-guess point forecast. If `quantileLevels` includes `0.5`, `quantiles["0.5"]` is identical to `median`.
+`median` is always present — best-guess point forecast. For most backends (Moirai-2, Toto-1, Sundial), `quantiles["0.5"]` and `median` are the same value (both derived from sample paths). **Chronos-2 is the exception**: its `median` is the mean of the predictive distribution (E[X]) returned by `predict_quantiles`, not the strict 50th percentile, so `median` and `quantiles["0.5"]` can differ for asymmetric distributions.
 
-### Per-model quirks
+### Ensemble — `POST /v1/univariate/forecast/ensemble`
 
-- **chronos-2** — native arbitrary-quantile output. No restrictions beyond `{0.1, ..., 0.9}`. Returns `list[Tensor]` (one per series, multivariate-shaped); we squeeze the channel axis for univariate output.
-- **timesfm-2.5** — compile-time `max_horizon` (default 512, must be multiple of 128). Request horizon > max → 400. Bump via `PREDICTALOT_TIMESFM_MAX_HORIZON` and restart. We bypass the library's built-in padding (mask=True path produces NaN at this commit) and edge-pad short inputs ourselves.
-- **moirai-2** — fixed 9-quantile output `{0.1..0.9}`; we filter to your requested subset. Wrapper context/horizon are baked at model-load time (`PREDICTALOT_MOIRAI_MAX_CONTEXT` / `_MAX_HORIZON`). Per-request inputs are zero-padded to the wrapper's context length with a `past_is_pad` mask.
-- **toto-1** — multivariate-native but we use it univariate. Quantiles via Monte-Carlo sampling (256 samples → empirical percentiles). Returns `[batch, channels, horizon]` shape; we squeeze leading dims.
-- **sundial-base-128m** — runs in its own sidecar process. From the API surface it's identical to the others. Generative sampling (`num_samples=64` by default, tune via `PREDICTALOT_SUNDIAL_NUM_SAMPLES`). First request waits for the sidecar to be reachable on its unix socket — usually <2s after container start.
-
-### Ensemble — `POST /v1/forecast/ensemble`
-
-Run multiple models in parallel and combine into a weighted-mean forecast. Returns the ensemble + every contributing model's individual forecast, so you can inspect dissent or post-process.
+Run every member of the type in parallel and combine into a weighted-mean forecast. Returns the ensemble + every contributing model's individual forecast, so you can inspect dissent or post-process.
 
 ```bash
-curl -s http://localhost:8080/v1/forecast/ensemble \
+curl -s http://localhost:8080/v1/univariate/forecast/ensemble \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{
     "context": [[1.0, 2.0, 3.0, 4.0, 5.0]],
@@ -127,13 +144,13 @@ curl -s http://localhost:8080/v1/forecast/ensemble \
   }' | jq
 ```
 
-Request shape — same as `/v1/forecast` minus `model`, plus an optional `weights` map:
+Request shape — same as the per-model `/v1/univariate/forecast` minus `model`, plus an optional `weights` map:
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `weights` | `{slug: float}` | uniform 1.0 | Non-negative per-model weights. Normalized internally (any positive numbers work). Weight `0` skips that model entirely (not called — that's how you disable a model). Unknown slug → 400. Omitted entry → weight 1.0. |
+| `weights` | `{slug: float}` | uniform 1.0 | Non-negative per-model weights restricted to type members. Normalized internally (any positive numbers work). Weight `0` skips that model entirely (not called — that's how you disable a model). Unknown slug for this type → 400. Omitted entry → weight 1.0. |
 
-Response adds three fields on top of the standard forecast shape:
+Response adds three fields on top of the standard per-type forecast shape:
 
 | Field | What it is |
 |---|---|
@@ -141,9 +158,217 @@ Response adds three fields on top of the standard forecast shape:
 | `weights` | The **normalized** weight per model that was applied to the average. |
 | `individual` | `{slug: full forecast result}` map — each entry has `model`, `horizon`, `quantileLevels`, `median`, `quantiles`, **and `weight`** (mirrors the top-level `weights[slug]`). |
 
-Failure of any one **included** model fails the whole call.
+Failure of any one **included** model fails the whole call. The same ensemble pattern applies to every other type — `/v1/multivariate/forecast/ensemble`, `/v1/covariates/past/forecast/ensemble`, etc. The wire shapes match each type's per-model response.
 
-### Error contract
+### Per-model quirks
+
+- **chronos-2** — native arbitrary-quantile output. No restrictions beyond `{0.1, ..., 0.9}`. Returns `list[Tensor]` (one per series, multivariate-shaped); we squeeze the channel axis for univariate output.
+- **timesfm-2.5** — compile-time `max_horizon` (default 512, must be multiple of 128). Request horizon > max → 400. Bump via `PREDICTALOT_TIMESFM_MAX_HORIZON` and restart. We bypass the library's built-in padding (mask=True path produces NaN at this commit) and edge-pad short inputs ourselves.
+- **moirai-2** — fixed 9-quantile output `{0.1..0.9}`; we filter to your requested subset. Wrapper context/horizon are baked at model-load time (`PREDICTALOT_MOIRAI_MAX_CONTEXT` / `_MAX_HORIZON`). Per-request inputs are zero-padded to the wrapper's context length with a `past_is_pad` mask.
+- **toto-1** — multivariate-native. Univariate calls run as a single-channel series. Quantiles via Monte-Carlo sampling (256 draws → empirical percentiles); the same draws drive `/v1/samples/forecast` when called via that type. Returns `[batch, channels, horizon]` shape; we squeeze leading dims for univariate output.
+- **sundial-base-128m** — runs in its own sidecar process. From the API surface it's identical to the others. Generative sampling (`num_samples=64` by default, tune via `PREDICTALOT_SUNDIAL_NUM_SAMPLES`). First request waits for the sidecar to be reachable on its unix socket — usually <2s after container start.
+
+## API — multivariate (`/v1/multivariate/forecast`)
+
+Each series carries multiple correlated channels (variates). Channels are forecast jointly per series.
+
+### Request
+
+```json
+{
+  "model": "moirai-2",
+  "context": [
+    [
+      [1.0, 2.0, 3.0, 4.0],
+      [10.0, 20.0, 30.0, 40.0]
+    ]
+  ],
+  "config": {"horizon": 3}
+}
+```
+
+| Field | Notes |
+|---|---|
+| `model` | `chronos-2`, `moirai-2`, or `toto-1`. Other slugs → 400 (not a multivariate member). |
+| `context` | `List[List[List[float]]]` — `[series][channel][time]`. All series must have the same channel count (mismatch → 400). |
+| `config` | Same `horizon`/`quantileLevels`/`contextLength` shape as univariate. |
+
+> **Moirai-2 multivariate caveat** — the upstream multivariate path is not exercised by Salesforce's own benchmark suite. We've validated output shapes but not numerical accuracy against a known-good baseline. For high-stakes multivariate workloads prefer `chronos-2` or `toto-1` until upstream ships a multivariate-specific eval.
+
+### Response
+
+```json
+{
+  "model": "moirai-2",
+  "horizon": 3,
+  "quantileLevels": [0.1, 0.5, 0.9],
+  "median": [[[...], [...]]],
+  "quantiles": {
+    "0.1": [[[...], [...]]],
+    "0.5": [[[...], [...]]],
+    "0.9": [[[...], [...]]]
+  }
+}
+```
+
+`median` and each `quantiles[level]` are shaped `[series][channel][time]`.
+
+Ensemble is `POST /v1/multivariate/forecast/ensemble` — same `weights` semantics as univariate, restricted to multivariate members.
+
+## API — covariates: past only (`/v1/covariates/past/forecast`)
+
+Forecast a univariate target conditioned on covariates whose values are known up to *now* but not into the future (e.g. observed temperature, observed promo flag).
+
+### Request
+
+```json
+{
+  "model": "chronos-2",
+  "context": [[1.0, 2.0, 3.0, 4.0]],
+  "pastCovariates": [
+    {
+      "temp": [20.0, 21.0, 22.0, 23.0],
+      "promo": [0.0, 0.0, 1.0, 1.0]
+    }
+  ],
+  "config": {"horizon": 3}
+}
+```
+
+| Field | Notes |
+|---|---|
+| `model` | `chronos-2` or `moirai-2`. |
+| `context` | `[series][time]` — univariate target. |
+| `pastCovariates` | One dict per series. Keys are covariate names; values are 1D float lists matching that series' context length. Every series must carry the same covariate names. |
+
+### Response
+
+Same shape as univariate (`median` and `quantiles[level]` are `[series][time]`).
+
+## API — covariates: future only (`/v1/covariates/future/forecast`)
+
+Forecast a univariate target conditioned on covariates known *only* over the future window (e.g. a planned price, a scheduled promotion, a weather forecast). The covariate value array per series must have length `horizon`.
+
+### Request
+
+```json
+{
+  "model": "chronos-2",
+  "context": [[1.0, 2.0, 3.0, 4.0]],
+  "futureCovariates": [
+    {"price": [9.5, 9.6, 9.7]}
+  ],
+  "config": {"horizon": 3}
+}
+```
+
+Only `chronos-2` implements this type in v0.2. Response shape matches univariate. The per-type ensemble endpoint exists for API symmetry — with a single member it's a degenerate single-result wrapper.
+
+## API — covariates: past + future (`/v1/covariates/forecast`)
+
+Forecast a univariate target with covariates that are observed up to *now* AND known into the future (e.g. `price`: known historical, known planned).
+
+### Request
+
+```json
+{
+  "model": "chronos-2",
+  "context": [[1.0, 2.0, 3.0, 4.0]],
+  "pastCovariates": [
+    {"price": [9.0, 9.0, 9.5, 9.5]}
+  ],
+  "futureCovariates": [
+    {"price": [9.5, 9.6, 9.7]}
+  ],
+  "config": {"horizon": 3}
+}
+```
+
+**Constraint inherited from chronos-2:** every covariate name appearing in `futureCovariates` MUST also appear in `pastCovariates` for the same series. The backend rejects future-only names.
+
+Only `chronos-2` implements this type in v0.2. Response shape matches univariate.
+
+## API — samples (`/v1/samples/forecast`)
+
+Returns raw Monte-Carlo sample paths instead of quantile summaries. Use this when you need joint distributions across timesteps, custom risk metrics, or scenario analysis on the actual draws.
+
+### Request
+
+```json
+{
+  "model": "toto-1",
+  "context": [[1.0, 2.0, 3.0, 4.0]],
+  "config": {"horizon": 3, "numSamples": 64}
+}
+```
+
+| Field | Notes |
+|---|---|
+| `model` | `toto-1` or `sundial-base-128m`. |
+| `config.numSamples` | Sample paths to draw per series. Default 64. `> 0`. |
+| `config.contextLength` | As elsewhere. |
+| `config.quantileLevels` | **Not used** here — the samples type returns paths, not summarized quantiles. |
+
+### Response
+
+```json
+{
+  "model": "toto-1",
+  "horizon": 3,
+  "numSamples": 64,
+  "samples": [[[...], [...], ...]],
+  "median": [[...]]
+}
+```
+
+| Field | Shape | Notes |
+|---|---|---|
+| `samples` | `[series][sample][time]` | Raw draws — order is not stable across calls. |
+| `median` | `[series][time]` | Convenience: per-step median across the sample axis. |
+
+### Samples ensemble (`/v1/samples/forecast/ensemble`)
+
+Weights control how many sample paths each model contributes. Per-member share is `max(1, round(weight * numSamples))` — a minority member with a small weight still contributes at least one path, so the ensemble never silently drops a model. Final `samples` is the concatenation of every member's draws along the sample axis; `median` is recomputed across the pooled paths.
+
+```json
+{
+  "context": [[1.0, 2.0, 3.0, 4.0]],
+  "config": {"horizon": 3, "numSamples": 32},
+  "weights": {"toto-1": 1.0, "sundial-base-128m": 1.0}
+}
+```
+
+→ each model draws 16 paths; response carries 32 total in `samples` and per-member detail in `individual`.
+
+## Per-type `/models` listings
+
+Every type advertises its members at `GET /v1/<type>/models` (no auth). Returns the type slug + per-member runtime state.
+
+```bash
+curl -s http://localhost:8080/v1/univariate/models | jq
+```
+
+```json
+{
+  "type": "univariate",
+  "models": [
+    {
+      "slug": "chronos-2",
+      "loaded": false,
+      "lastUsedSecsAgo": null,
+      "idleTimeoutSecs": 1800.0
+    },
+    {"slug": "timesfm-2.5",       "loaded": false, "lastUsedSecsAgo": null, "idleTimeoutSecs": 1800.0},
+    {"slug": "moirai-2",          "loaded": true,  "lastUsedSecsAgo": 4.1,  "idleTimeoutSecs": 1800.0},
+    {"slug": "toto-1",            "loaded": false, "lastUsedSecsAgo": null, "idleTimeoutSecs": 1800.0},
+    {"slug": "sundial-base-128m", "loaded": false, "lastUsedSecsAgo": null, "idleTimeoutSecs": 1800.0}
+  ]
+}
+```
+
+A model that supports multiple types appears in every relevant listing (e.g. `chronos-2` shows up in all six). The `loaded` / `lastUsedSecsAgo` fields are shared across listings — there's one backend per slug, not one per type.
+
+## Error contract
 
 Two shapes — application errors return a human-readable string; Pydantic validation errors (422) return a structured array (FastAPI default; we don't flatten).
 
@@ -153,7 +378,7 @@ Two shapes — application errors return a human-readable string; Pydantic valid
 { "detail": "human-readable error string" }
 ```
 
-**Validation errors** — `422` (wrong field type, missing required field, `horizon` not `> 0`, etc.):
+**Validation errors** — `422` (wrong field type, missing required field, `horizon` not `> 0`, missing `pastCovariates` on a covariates endpoint, etc.):
 
 ```json
 {
@@ -170,7 +395,7 @@ Two shapes — application errors return a human-readable string; Pydantic valid
 
 | Status | Shape | When |
 |---|---|---|
-| 400 | string | bad input (empty context, unsupported quantile level, horizon over compile-time cap, unknown weights slug) |
+| 400 | string | bad input (empty context, unsupported quantile level, horizon over compile-time cap, model is not a member of the requested type, unknown weights slug for the type) |
 | 401 | string | missing / wrong bearer token |
 | 404 | string | unknown model slug in `model` field |
 | 413 | string | request body > `PREDICTALOT_MAX_BODY_SIZE` |
@@ -179,19 +404,31 @@ Two shapes — application errors return a human-readable string; Pydantic valid
 
 ## MCP — `/mcp`
 
-Streamable-HTTP MCP server. Same auth as HTTP (bearer header or `?apiToken=...` query). Tools:
+Streamable-HTTP MCP server. Same auth as HTTP (bearer header or `?apiToken=...` query). 26 tools, organized by forecast type. The tool surface is identical to the HTTP API — one named tool per (type, model) cell in the matrix.
 
-| Tool | Args |
-|---|---|
-| `forecast_chronos_2` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=2048, unload=False` |
-| `forecast_timesfm_2_5` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=2048, unload=False` |
-| `forecast_moirai_2` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=4000, unload=False` |
-| `forecast_toto_1` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=4096, unload=False` |
-| `forecast_sundial_base_128m` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=2880, unload=False` |
-| `forecast_ensemble` | `context, horizon, quantile_levels=[0.1,0.5,0.9], context_length=None, weights=None, unload=False` |
-| `list_models` | none |
+Naming convention:
+- `forecast_<type>_<model>` — single-model forecast. Examples: `forecast_univariate_chronos_2`, `forecast_multivariate_moirai_2`, `forecast_samples_toto_1`.
+- `forecast_<type>_ensemble` — per-type weighted ensemble. One per type (6 total).
+- `list_<type>_models` — per-type runtime listing. One per type (6 total).
 
-Five named forecasting tools (not one polymorphic `forecast(model=...)`) — LLM agents discover and pick named capabilities more reliably than they pick an enum argument. `forecast_ensemble` accepts the same `weights` map as the HTTP route.
+Model slug dashes/dots become underscores in the tool name (`sundial-base-128m` → `sundial_base_128m`, `timesfm-2.5` → `timesfm_2_5`).
+
+| Type | Per-model tools | Ensemble | List |
+|---|---|---|---|
+| univariate | `forecast_univariate_chronos_2`, `..._timesfm_2_5`, `..._moirai_2`, `..._toto_1`, `..._sundial_base_128m` | `forecast_univariate_ensemble` | `list_univariate_models` |
+| multivariate | `forecast_multivariate_chronos_2`, `..._moirai_2`, `..._toto_1` | `forecast_multivariate_ensemble` | `list_multivariate_models` |
+| covariates-past | `forecast_covariates_past_chronos_2`, `..._moirai_2` | `forecast_covariates_past_ensemble` | `list_covariates_past_models` |
+| covariates-future | `forecast_covariates_future_chronos_2` | `forecast_covariates_future_ensemble` | `list_covariates_future_models` |
+| covariates (past + future) | `forecast_covariates_both_chronos_2` | `forecast_covariates_both_ensemble` | `list_covariates_both_models` |
+| samples | `forecast_samples_toto_1`, `forecast_samples_sundial_base_128m` | `forecast_samples_ensemble` | `list_samples_models` |
+
+Args per tool mirror the HTTP body, flattened to keyword arguments:
+- quantile types: `context, horizon, quantile_levels=None, context_length=None, unload=False`
+  (covariate variants add `past_covariates` and/or `future_covariates`)
+- samples: `context, horizon, num_samples=None, context_length=None, unload=False`
+- every `forecast_<type>_ensemble`: same args as the per-model tool minus `model`, plus `weights: dict[str, float] | None = None`
+
+Named per-(type, model) tools (not one polymorphic `forecast(type=..., model=...)`) — LLM agents discover and pick named capabilities more reliably than they pick a pair of enum arguments.
 
 ## Configuration (env vars)
 
@@ -253,7 +490,7 @@ Trade-offs:
 
 ## Accuracy & latency
 
-Numbers from `make bench` against `psyb0t/predictalot-test:cuda` on an RTX 3060. Lower sMAPE = better forecast. Latency is round-trip wall-clock per single-series forecast (after warmup, single-series in the request body).
+Numbers from `make bench` against `psyb0t/predictalot-test:cuda` on an RTX 3060. Lower sMAPE = better forecast. Latency is round-trip wall-clock per single-series univariate forecast (after warmup, single-series in the request body).
 
 ### Accuracy (sMAPE %)
 
@@ -287,7 +524,7 @@ Three real-world benchmarks fetched live by `make bench`:
 
 6. **For comparison:** hand-tuned ARIMA on AirPassengers gets ~3-5% sMAPE. predictalot's best on that dataset is moirai-2 at 7.71% sMAPE — competitive zero-shot, no per-series fitting.
 
-### Latency per single-series forecast
+### Latency per single-series univariate forecast
 
 | Model | CPU (ms) | CUDA RTX 3060 (ms) | speedup |
 |---|---:|---:|---:|
@@ -356,16 +593,11 @@ make test-integration  # build the prod image, run it, hit it with real ML calls
 make bench             # accuracy + latency benchmark on real public datasets
 ```
 
-`make test-integration` auto-detects CUDA (via `docker info | grep nvidia`) and uses the matching image with `--gpus all` if available. Models cache to `tests/integration/.fixtures/models/` (gitignored). 14 integration tests cover every model + ensemble + per-quantile-level + unload flag + CUDA detection.
+`make test-integration` auto-detects CUDA (via `docker info | grep nvidia`) and uses the matching image with `--gpus all` if available. Models cache to `tests/integration/.fixtures/models/` (gitignored). Integration tests cover every type endpoint × member model plus per-type ensemble + unload flag + CUDA detection.
 
-`make bench` requires a running container reachable at `PREDICTALOT_BENCH_URL` (default `http://127.0.0.1:18080`) with bearer token in `PREDICTALOT_BENCH_TOKEN` (default `devtok`). Compares each individual model against the seasonal-naive baseline and several weighted-ensemble variants on six datasets (three academic + three real-world public APIs: NOAA CO2, Binance gold/BTC).
+`make bench` requires a running container reachable at `PREDICTALOT_BENCH_URL` (default `http://127.0.0.1:18080`) with bearer token in `PREDICTALOT_BENCH_TOKEN` (default `devtok`). Compares each individual model against the seasonal-naive baseline and several weighted-ensemble variants on six datasets (three academic + three real-world public APIs: NOAA CO2, Binance gold/BTC). All bench calls go through `/v1/univariate/forecast`.
 
 `make pkg-*` targets follow the supply-chain age-gate pattern: every dep mutation bumps `[tool.uv] exclude-newer` to today's UTC midnight first, so brand-new (potentially compromised) package versions are refused at install time.
-
-### Test counts
-
-- **Unit tests**: 83 (stubbed backends, fast, offline)
-- **Integration tests**: 14 (real Docker image, real ML calls, opt-in via `-m integration`)
 
 ## Security notes
 
@@ -396,14 +628,18 @@ If you point `PREDICTALOT_MODEL_DIR` at a directory containing **arbitrary user-
 
 Run `osv-scanner` against the image before deployment if you want a fresh advisory check.
 
-## Roadmap / not yet supported
+## Roadmap
 
-- **Multivariate forecasting** — joint forecast over correlated series (e.g. `[temperature, humidity, pressure]` together). Currently univariate only. Chronos-2, Moirai-2, and Toto-1 all support multivariate natively; just need wire-shape work.
-- **Covariates** — past + future side-info that improves the target forecast. Two flavors: past covariates (e.g. yesterday's foot traffic) and future covariates (e.g. is_holiday flag known into the forecast window). Chronos-2 supports both, Moirai-2 supports past.
-- **Big-context uploads** — multipart `form-data` or binary body when JSON-32MB isn't enough. Defaults are sized for normal-shape workloads.
-- **Pre-baked weights** — build-arg option to bake selected models into the image for airgapped deploys. Currently weights are runtime-downloaded.
+### Maybe in v0.3
+
+- **Cross-combo types** — `/v1/multivariate/covariates/...` and `/v1/multivariate/samples/forecast` if anyone asks. chronos-2 + toto-1 do these natively; the per-type registry pattern absorbs them cleanly.
 - **Toto-2.0** (released April 2026) — newer architecture, top-3 on GIFT-Eval CRPS. Blocked by torch 2.5+ requirement (uni2ts cap). Watch for PyPI packaging; currently git-only.
 - **More sidecar models** — the pattern is in place; adding e.g. ibm-granite's TTM-r2 or FlowState requires a new venv + worker module, no architectural change.
+
+### Other / no schedule
+
+- **Big-context uploads** — multipart `form-data` or binary body when JSON-32MB isn't enough. Defaults are sized for normal-shape workloads.
+- **Pre-baked weights** — build-arg option to bake selected models into the image for airgapped deploys. Currently weights are runtime-downloaded.
 
 ## License
 

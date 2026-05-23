@@ -1,8 +1,8 @@
 """Accuracy + latency benchmark for predictalot.
 
-Pulls real public time-series, holds out the tail, hits /v1/forecast for each
-model and times the round-trip. Compares MAE / RMSE / sMAPE against the
-held-out actuals + a seasonal-naive baseline.
+Pulls real public time-series, holds out the tail, hits /v1/univariate/forecast
+for each model and times the round-trip. Compares MAE / RMSE / sMAPE against
+the held-out actuals + a seasonal-naive baseline.
 
 Usage:
     python benchs/run.py                                  # default localhost:18080
@@ -28,7 +28,6 @@ BASE_URL = os.environ.get("PREDICTALOT_BENCH_URL", "http://127.0.0.1:18080")
 TOKEN = os.environ.get("PREDICTALOT_BENCH_TOKEN", "devtok")
 
 MODELS = ("chronos-2", "timesfm-2.5", "moirai-2", "toto-1", "sundial-base-128m")
-ENSEMBLE_LABEL = "ensemble (3-avg)"
 
 
 def fetch_csv(url: str, value_col: str) -> list[float]:
@@ -81,7 +80,7 @@ def forecast(client: httpx.Client, model: str, series: list[float], horizon: int
     """Returns (median forecast, wall-clock seconds)."""
     t0 = time.perf_counter()
     r = client.post(
-        "/v1/forecast",
+        "/v1/univariate/forecast",
         json={"model": model, "context": [series], "config": {"horizon": horizon}},
     )
     r.raise_for_status()
@@ -99,7 +98,7 @@ def forecast_ensemble(
     if weights is not None:
         body["weights"] = weights
     t0 = time.perf_counter()
-    r = client.post("/v1/forecast/ensemble", json=body)
+    r = client.post("/v1/univariate/forecast/ensemble", json=body)
     r.raise_for_status()
     elapsed = time.perf_counter() - t0
     return r.json()["median"][0], elapsed
@@ -142,12 +141,54 @@ def run_dataset(client: httpx.Client, name: str, series: list[float], horizon: i
         except Exception as e:  # noqa: BLE001
             print(f"  {model:16s} ERROR: {e}")
 
+    # Labels must match the actual members: an omitted slug defaults to
+    # weight 1.0 (per /v1/univariate/forecast/ensemble semantics), so every
+    # config that intends to exclude a model must set its weight to 0
+    # explicitly. sundial-base-128m is included in this list because it
+    # supports univariate; configs that don't mention it would silently pull
+    # it in.
     ensemble_configs: list[tuple[str, dict | None]] = [
         ("ens uniform", None),
-        ("ens no-timesfm", {"chronos-2": 1, "timesfm-2.5": 0, "moirai-2": 1, "toto-1": 1}),
-        ("ens no-toto", {"chronos-2": 1, "timesfm-2.5": 1, "moirai-2": 1, "toto-1": 0}),
-        ("ens chronos+moirai", {"chronos-2": 1, "timesfm-2.5": 0, "moirai-2": 1, "toto-1": 0}),
-        ("ens chronos-heavy", {"chronos-2": 2, "timesfm-2.5": 0.5, "moirai-2": 1, "toto-1": 0.5}),
+        (
+            "ens no-timesfm",
+            {
+                "chronos-2": 1,
+                "timesfm-2.5": 0,
+                "moirai-2": 1,
+                "toto-1": 1,
+                "sundial-base-128m": 1,
+            },
+        ),
+        (
+            "ens no-toto",
+            {
+                "chronos-2": 1,
+                "timesfm-2.5": 1,
+                "moirai-2": 1,
+                "toto-1": 0,
+                "sundial-base-128m": 1,
+            },
+        ),
+        (
+            "ens chronos+moirai",
+            {
+                "chronos-2": 1,
+                "timesfm-2.5": 0,
+                "moirai-2": 1,
+                "toto-1": 0,
+                "sundial-base-128m": 0,
+            },
+        ),
+        (
+            "ens chronos-heavy",
+            {
+                "chronos-2": 2,
+                "timesfm-2.5": 0.5,
+                "moirai-2": 1,
+                "toto-1": 0.5,
+                "sundial-base-128m": 0.5,
+            },
+        ),
     ]
     for label, weights in ensemble_configs:
         try:

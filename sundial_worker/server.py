@@ -2,23 +2,13 @@
 
 Lives in its own venv with transformers==4.40.1 because Sundial's published
 model code uses several DynamicCache internals that were removed in
-transformers 4.42+ (seen_tokens, get_max_length, get_usable_length, plus a
-4D-mask shape change deep in modeling_attn_mask_utils). Patching all of
-them from the outside was too brittle — easier to just pin the version.
+transformers 4.42+. The main predictalot service talks to this worker over
+a unix socket (default `/tmp/predictalot/sundial.sock`) using plain HTTP.
 
-The main predictalot service talks to this worker over a unix socket
-(default `/tmp/predictalot/sundial.sock`) using plain HTTP. From the main
-service's perspective sundial is just another forecast backend.
-
-Run via uvicorn:
-
-    /opt/sundial-venv/bin/uvicorn sundial_worker.server:app \\
-        --uds /tmp/predictalot/sundial.sock
-
-Env vars (all read at startup):
-    PREDICTALOT_SUNDIAL_MODEL_DIR   — local snapshot dir (default /models/sundial-base-128m)
-    PREDICTALOT_DEVICE              — auto/cpu/cuda (default auto)
-    PREDICTALOT_SUNDIAL_NUM_SAMPLES — samples for quantile estimation (default 64)
+Endpoints:
+    GET  /healthz
+    POST /forecast   — quantile output (univariate type)
+    POST /samples    — raw sample paths (samples type)
 """
 
 from __future__ import annotations
@@ -55,7 +45,7 @@ def _model_dir() -> str:
     )
 
 
-def _num_samples() -> int:
+def _default_num_samples() -> int:
     try:
         return int(os.environ.get("PREDICTALOT_SUNDIAL_NUM_SAMPLES", "64"))
     except ValueError:
@@ -63,7 +53,6 @@ def _num_samples() -> int:
 
 
 def _load_sync() -> Any:
-    """Download+load. Called in a thread because it does blocking I/O."""
     from huggingface_hub import snapshot_download
     from transformers import AutoModelForCausalLM
 
@@ -107,6 +96,21 @@ class ForecastResponse(BaseModel):
     quantiles: dict[str, list[list[float]]]
 
 
+class SamplesRequest(BaseModel):
+    context: list[list[float]] = Field(..., description="One inner list per series.")
+    horizon: int = Field(..., gt=0)
+    num_samples: int | None = Field(default=None, gt=0)
+    context_length: int = Field(default=2880, gt=0)
+
+
+class SamplesResponse(BaseModel):
+    model: str
+    horizon: int
+    num_samples: int
+    samples: list[list[list[float]]]
+    median: list[list[float]]
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     yield
@@ -120,14 +124,17 @@ def healthz() -> dict[str, Any]:
     return {"ok": True, "model": SLUG, "loaded": _model is not None}
 
 
-@app.post("/forecast", response_model=ForecastResponse)
-async def forecast(req: ForecastRequest) -> dict[str, Any]:
-    if not req.context:
+def _validate_context(context: list[list[float]]) -> None:
+    if not context:
         raise HTTPException(status_code=400, detail="context must not be empty")
-    for i, s in enumerate(req.context):
+    for i, s in enumerate(context):
         if not s:
             raise HTTPException(status_code=400, detail=f"context[{i}] is empty")
 
+
+@app.post("/forecast", response_model=ForecastResponse)
+async def forecast(req: ForecastRequest) -> dict[str, Any]:
+    _validate_context(req.context)
     try:
         model = await _get_model()
     except Exception as exc:  # noqa: BLE001
@@ -149,6 +156,32 @@ async def forecast(req: ForecastRequest) -> dict[str, Any]:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.post("/samples", response_model=SamplesResponse)
+async def samples(req: SamplesRequest) -> dict[str, Any]:
+    _validate_context(req.context)
+    try:
+        model = await _get_model()
+    except Exception as exc:  # noqa: BLE001
+        log.exception("failed to load sundial")
+        raise HTTPException(status_code=503, detail=f"load failed: {exc}") from exc
+
+    n_samples = req.num_samples if req.num_samples is not None else _default_num_samples()
+
+    async with _lock:
+        try:
+            return await asyncio.to_thread(
+                _samples_sync,
+                model,
+                req.context,
+                req.horizon,
+                n_samples,
+                req.context_length,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("sundial sample-gen failed")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 def _forecast_sync(
     model: Any,
     context: list[list[float]],
@@ -156,8 +189,7 @@ def _forecast_sync(
     quantile_levels: list[float],
     context_length: int,
 ) -> dict[str, Any]:
-    device = _device()
-    n_samples = _num_samples()
+    n_samples = _default_num_samples()
 
     all_medians: list[list[float]] = []
     out_quantiles: dict[str, list[list[float]]] = {
@@ -165,24 +197,12 @@ def _forecast_sync(
     }
 
     for series in context:
-        sliced = series[-context_length:] if context_length > 0 else series
-        x = torch.tensor(sliced, dtype=torch.float32, device=device).reshape(1, -1)
-
-        with torch.no_grad():
-            # Returns [batch, num_samples, horizon] — sundial generates
-            # multiple sample paths and we take percentiles across them.
-            out = model.generate(
-                x, max_new_tokens=horizon, num_samples=n_samples, revin=True
-            )
-        # out: [1, n_samples, horizon]
-        samples = out.detach().cpu().numpy()  # shape: (1, n_samples, horizon)
-
-        # Median is the 0.5 quantile of the samples.
-        median = _percentile_along_samples(samples, 0.5)
-        all_medians.append(median[0].tolist())  # series 0 of [1, horizon]
-
+        samples_arr = _generate_samples(model, series, horizon, n_samples, context_length)
+        # samples_arr: (1, n_samples, horizon)
+        median = _percentile_along_samples(samples_arr, 0.5)
+        all_medians.append(median[0].tolist())
         for q in quantile_levels:
-            q_arr = _percentile_along_samples(samples, q)
+            q_arr = _percentile_along_samples(samples_arr, q)
             out_quantiles[f"{q:.1f}"].append(q_arr[0].tolist())
 
     return {
@@ -192,6 +212,52 @@ def _forecast_sync(
         "median": all_medians,
         "quantiles": out_quantiles,
     }
+
+
+def _samples_sync(
+    model: Any,
+    context: list[list[float]],
+    horizon: int,
+    num_samples: int,
+    context_length: int,
+) -> dict[str, Any]:
+    import numpy as np
+
+    all_samples: list[list[list[float]]] = []
+    all_medians: list[list[float]] = []
+
+    for series in context:
+        samples_arr = _generate_samples(model, series, horizon, num_samples, context_length)
+        # samples_arr: (1, n_samples, horizon) → strip batch dim → (n_samples, horizon)
+        s = samples_arr[0]
+        all_samples.append(s.tolist())
+        all_medians.append(np.median(s, axis=0).tolist())
+
+    return {
+        "model": SLUG,
+        "horizon": horizon,
+        "num_samples": num_samples,
+        "samples": all_samples,
+        "median": all_medians,
+    }
+
+
+def _generate_samples(
+    model: Any,
+    series: list[float],
+    horizon: int,
+    num_samples: int,
+    context_length: int,
+):
+    """Run model.generate on a single series; return numpy (1, num_samples, horizon)."""
+    device = _device()
+    sliced = series[-context_length:] if context_length > 0 else series
+    x = torch.tensor(sliced, dtype=torch.float32, device=device).reshape(1, -1)
+    with torch.no_grad():
+        out = model.generate(
+            x, max_new_tokens=horizon, num_samples=num_samples, revin=True
+        )
+    return out.detach().cpu().numpy()
 
 
 def _percentile_along_samples(samples, q: float):

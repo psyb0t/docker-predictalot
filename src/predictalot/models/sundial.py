@@ -1,20 +1,12 @@
 """Sundial backend (thuml/sundial-base-128m) — talks to a sidecar worker.
 
 Sundial's published model code uses transformers 4.40 internals that were
-removed in 4.42+ (DynamicCache.seen_tokens / get_max_length /
-get_usable_length, plus a 4D-mask shape change). Shimming them from the
-outside breaks deeper inside transformers itself; sundial really does need
-transformers==4.40.
+removed in 4.42+, so it lives in its own venv (`/opt/sundial-venv`) and runs
+as a tiny FastAPI worker on a unix socket. From the predictalot API's
+perspective sundial looks identical to chronos/timesfm/moirai/toto.
 
-So sundial lives in its own venv (`/opt/sundial-venv`), runs as a tiny
-background FastAPI worker on a unix socket, and we talk to it like any
-other forecast backend. From the predictalot API's perspective, sundial
-looks identical to chronos/timesfm/moirai/toto — same wire shape, same
-predict() interface, same per-model lock + lazy-load semantics.
-
-If the worker isn't reachable (still booting after container start, or
-crashed and being restarted by the entrypoint's restart loop), this
-backend returns 503 — same as a snapshot download failure would.
+Supported types: univariate, samples. Sundial is univariate-only at the
+model level (see `.research_files/sundial-modes.md` §5).
 """
 
 from __future__ import annotations
@@ -27,16 +19,22 @@ from typing import Any
 
 import httpx
 
+from .. import types
+
 SLUG = "sundial-base-128m"
+
+SUPPORTED_TYPES: frozenset[str] = frozenset(
+    {
+        types.TYPE_UNIVARIATE,
+        types.TYPE_SAMPLES,
+    }
+)
 
 log = logging.getLogger(f"predictalot.models.{SLUG}")
 
-# Sundial worker connection — unix socket path is fixed by the entrypoint
-# (with env override for tests).
 SUNDIAL_SOCK = os.environ.get(
     "PREDICTALOT_SUNDIAL_SOCK", "/tmp/predictalot/sundial.sock"
 )
-# How long to wait for the worker to come up on first request.
 WORKER_READY_TIMEOUT = float(
     os.environ.get("PREDICTALOT_SUNDIAL_READY_TIMEOUT", "60.0")
 )
@@ -63,7 +61,6 @@ def _bump_last_used() -> None:
 
 
 def _get_or_create_client() -> httpx.AsyncClient:
-    """Build the httpx client lazily so import time stays cheap."""
     global _client
     if _client is None:
         transport = httpx.AsyncHTTPTransport(uds=SUNDIAL_SOCK)
@@ -74,7 +71,6 @@ def _get_or_create_client() -> httpx.AsyncClient:
 
 
 async def _wait_for_worker(timeout: float = WORKER_READY_TIMEOUT) -> None:
-    """Block until /healthz on the worker returns 200."""
     client = _get_or_create_client()
     deadline = time.monotonic() + timeout
     last_err: Exception | None = None
@@ -94,8 +90,6 @@ async def _wait_for_worker(timeout: float = WORKER_READY_TIMEOUT) -> None:
 
 
 async def get_model() -> Any:
-    """For sundial, 'loading' means the sidecar worker is reachable + healthy.
-    The actual weights load lives inside the worker process."""
     global _loaded
     if _loaded:
         return _get_or_create_client()
@@ -110,9 +104,6 @@ async def get_model() -> Any:
 
 
 async def unload() -> None:
-    """Mark unloaded on our side; we don't tear down the worker process
-    itself (it's managed by the entrypoint restart loop). The worker keeps
-    its own model loaded indefinitely — its memory is its own concern."""
     global _loaded, _last_used
     async with _lock:
         if not _loaded:
@@ -122,7 +113,10 @@ async def unload() -> None:
         _last_used = None
 
 
-async def predict(
+# ─── univariate ───────────────────────────────────────────────────────────────
+
+
+async def predict_univariate(
     context: list[list[float]],
     horizon: int,
     quantile_levels: list[float],
@@ -137,13 +131,38 @@ async def predict(
             "quantile_levels": list(quantile_levels),
             "context_length": context_length,
         }
-        try:
-            r = await client.post("/forecast", json=body)
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"sundial worker request failed: {exc}") from exc
-        if r.status_code != 200:
-            raise RuntimeError(
-                f"sundial worker returned {r.status_code}: {r.text[:200]}"
-            )
-        _bump_last_used()
-        return r.json()
+        return await _post_json(client, "/forecast", body)
+
+
+# ─── samples ──────────────────────────────────────────────────────────────────
+
+
+async def predict_samples(
+    context: list[list[float]],
+    horizon: int,
+    num_samples: int,
+    context_length: int,
+) -> dict[str, Any]:
+    await get_model()
+    async with _lock:
+        client = _get_or_create_client()
+        body = {
+            "context": context,
+            "horizon": horizon,
+            "num_samples": num_samples,
+            "context_length": context_length,
+        }
+        return await _post_json(client, "/samples", body)
+
+
+async def _post_json(client: httpx.AsyncClient, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        r = await client.post(path, json=body)
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"sundial worker request to {path} failed: {exc}") from exc
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"sundial worker {path} returned {r.status_code}: {r.text[:200]}"
+        )
+    _bump_last_used()
+    return r.json()
