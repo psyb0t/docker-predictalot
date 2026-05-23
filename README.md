@@ -40,13 +40,12 @@ curl -s http://localhost:8080/v1/univariate/forecast/ensemble \
     "weights": {"chronos-2": 2.0, "moirai-2": 1.0, "timesfm-2.5": 0}
   }' | jq
 
-# Which models implement each type (and their loaded/unloaded status)
-curl -s http://localhost:8080/v1/univariate/models | jq
-curl -s http://localhost:8080/v1/multivariate/models | jq
-curl -s http://localhost:8080/v1/covariates/past/models | jq
-curl -s http://localhost:8080/v1/covariates/future/models | jq
-curl -s http://localhost:8080/v1/covariates/models | jq
-curl -s http://localhost:8080/v1/samples/models | jq
+# Which models implement each type (and their loaded/unloaded status).
+# Same bearer requirement as the forecast endpoints.
+for t in univariate multivariate covariates/past covariates/future covariates samples; do
+  curl -s -H "Authorization: Bearer changeme" \
+      "http://localhost:8080/v1/$t/models" | jq
+done
 ```
 
 GPU variant: pull `psyb0t/predictalot:latest-cuda` and add `--gpus all` to `docker run`. Both CPU and CUDA images are amd64-only (PyTorch's CPU wheel index has no aarch64 build at the pinned version).
@@ -342,10 +341,11 @@ Weights control how many sample paths each model contributes. Per-member share i
 
 ## Per-type `/models` listings
 
-Every type advertises its members at `GET /v1/<type>/models` (no auth). Returns the type slug + per-member runtime state.
+Every type advertises its members at `GET /v1/<type>/models`. Same bearer-token requirement as the forecast endpoints (the listing reveals which models are loaded and when they were last used). Returns the type slug + per-member runtime state.
 
 ```bash
-curl -s http://localhost:8080/v1/univariate/models | jq
+curl -s -H "Authorization: Bearer changeme" \
+    http://localhost:8080/v1/univariate/models | jq
 ```
 
 ```json

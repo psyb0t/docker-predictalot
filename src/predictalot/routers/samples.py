@@ -77,6 +77,6 @@ async def post_forecast(body: SamplesRequest) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.get("/models")
+@router.get("/models", dependencies=[Depends(check_bearer)])
 def list_models() -> dict[str, Any]:
     return build_type_models_response(types.TYPE_SAMPLES, models)

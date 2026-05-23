@@ -19,7 +19,7 @@ class TestPerTypeModelsEndpoint:
     def _expect_members(
         self, client: TestClient, url: str, type_slug: str, expected: list[str]
     ) -> None:
-        resp = client.get(url)
+        resp = client.get(url, headers=HEADERS)
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["type"] == type_slug
@@ -78,8 +78,13 @@ class TestPerTypeModelsEndpoint:
             ["toto-1", "sundial-base-128m"],
         )
 
-    def test_models_endpoints_unauthenticated(self, client: TestClient) -> None:
-        """All /v1/<type>/models endpoints are publicly readable (no bearer)."""
+    def test_models_endpoints_require_bearer(self, client: TestClient) -> None:
+        """All /v1/<type>/models endpoints reject unauthenticated reads.
+
+        Listing reveals which models are installed, their loaded state and
+        last-used timestamps — usage-pattern information that must not leak
+        to unauthenticated callers.
+        """
         for url in (
             "/v1/univariate/models",
             "/v1/multivariate/models",
@@ -89,4 +94,21 @@ class TestPerTypeModelsEndpoint:
             "/v1/samples/models",
         ):
             resp = client.get(url)
+            assert resp.status_code == 401, f"{url}: {resp.status_code} {resp.text}"
+            resp_bad = client.get(url, headers={"Authorization": "Bearer WRONG"})
+            assert resp_bad.status_code == 401, f"{url}: {resp_bad.text}"
+
+    def test_models_endpoints_open_when_auth_disabled(
+        self, open_client: TestClient
+    ) -> None:
+        """With auth disabled (ALLOW_NO_AUTH + empty token list) /models is open."""
+        for url in (
+            "/v1/univariate/models",
+            "/v1/multivariate/models",
+            "/v1/covariates/past/models",
+            "/v1/covariates/future/models",
+            "/v1/covariates/models",
+            "/v1/samples/models",
+        ):
+            resp = open_client.get(url)
             assert resp.status_code == 200, f"{url}: {resp.text}"

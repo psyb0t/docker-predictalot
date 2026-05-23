@@ -1,6 +1,6 @@
 [project]
 name = "predictalot"
-version = "0.2.0"
+version = "0.2.1"
 description = "FastAPI service exposing 5 foundation time-series forecasters (Chronos-2, TimesFM 2.5, Moirai-2, Toto-1, Sundial-base-128m) under a type-routed API: univariate, multivariate, covariates (past/future/both), and raw samples"
 license = { text = "WTFPL" }
 requires-python = ">=3.12"
