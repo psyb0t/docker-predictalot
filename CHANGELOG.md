@@ -5,6 +5,34 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.0.1 — 2026-06-14
+
+Docs-only patch release. No code, no API behavior, no dependency, no image
+size change. Repackages the v1.0.0 README into a focused overview + a
+`docs/*.md` tree.
+
+### Changed
+
+- `README.md` slimmed to a project pitch + quick-start + links to
+  `docs/*.md`. Previously a single 650-line wall.
+- `docs/timeseries.md` (new) — full FM API: 5 models, 6 types, per-model
+  quirks, ensemble (`weights` + `memberOverrides`), `/models` listings.
+  Adds **"Recommended for"** guidance per model + per type.
+- `docs/tabular.md` (new) — full tabular API: 9 backends, 3 modes,
+  tier-1/2/3 config knobs, 3 meta-learners (calibrated / stacking /
+  diversified), storage layout. Adds **"Recommended for"** guidance per
+  backend.
+- `docs/mcp.md` (new) — MCP tool naming + per-type matrix.
+- `docs/configuration.md` (new) — every `PREDICTALOT_*` env var + sample
+  config recipes.
+- `docs/architecture.md` (new) — sidecar pattern, multi-venv rationale,
+  CPU vs CUDA images, lazy-load tabular backends, healthcheck.
+- `docs/accuracy.md` (new) — benchmark sMAPE + latency tables + honest
+  takeaways. Same data as v1.0.0; clearer surface.
+- `docs/errors.md` (new) — error contract + common 400 causes per surface.
+
+No source files changed.
+
 ## v1.0.0 — 2026-06-14
 
 API stabilization release. Adds a second model family (tabular ML) alongside
