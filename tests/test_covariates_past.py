@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 
 
 HEADERS = {"Authorization": "Bearer testtoken"}
-URL = "/v1/covariates/past/forecast"
-ENSEMBLE_URL = "/v1/covariates/past/forecast/ensemble"
+URL = "/v1/timeseries/covariates/past/forecast"
+ENSEMBLE_URL = "/v1/timeseries/covariates/past/forecast/ensemble"
 MEMBERS = ["chronos-2", "moirai-2"]
 
 

@@ -20,13 +20,13 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-UNIVARIATE_URL = "/v1/univariate/forecast"
-UNIVARIATE_ENSEMBLE_URL = "/v1/univariate/forecast/ensemble"
-MULTIVARIATE_URL = "/v1/multivariate/forecast"
-COVARIATES_PAST_URL = "/v1/covariates/past/forecast"
-COVARIATES_FUTURE_URL = "/v1/covariates/future/forecast"
-COVARIATES_BOTH_URL = "/v1/covariates/forecast"
-SAMPLES_URL = "/v1/samples/forecast"
+UNIVARIATE_URL = "/v1/timeseries/univariate/forecast"
+UNIVARIATE_ENSEMBLE_URL = "/v1/timeseries/univariate/forecast/ensemble"
+MULTIVARIATE_URL = "/v1/timeseries/multivariate/forecast"
+COVARIATES_PAST_URL = "/v1/timeseries/covariates/past/forecast"
+COVARIATES_FUTURE_URL = "/v1/timeseries/covariates/future/forecast"
+COVARIATES_BOTH_URL = "/v1/timeseries/covariates/forecast"
+SAMPLES_URL = "/v1/timeseries/samples/forecast"
 
 
 def _sane_floats(values: list[float]) -> None:
@@ -118,7 +118,7 @@ class TestUnivariateLive:
         )
         assert r1.status_code == 200
 
-        info_loaded = http_client.get("/v1/univariate/models").json()
+        info_loaded = http_client.get("/v1/timeseries/univariate/models").json()
         moirai_info = next(m for m in info_loaded["models"] if m["slug"] == "moirai-2")
         assert moirai_info["loaded"] is True
 
@@ -133,7 +133,7 @@ class TestUnivariateLive:
         )
         assert r2.status_code == 200
 
-        info_unloaded = http_client.get("/v1/univariate/models").json()
+        info_unloaded = http_client.get("/v1/timeseries/univariate/models").json()
         moirai_info = next(m for m in info_unloaded["models"] if m["slug"] == "moirai-2")
         assert moirai_info["loaded"] is False
 

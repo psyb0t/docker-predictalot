@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 
 HEADERS = {"Authorization": "Bearer testtoken"}
-URL = "/v1/univariate/forecast"
+URL = "/v1/timeseries/univariate/forecast"
 
 
 @pytest.mark.parametrize(

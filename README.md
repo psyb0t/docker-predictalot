@@ -1,12 +1,16 @@
 # predictalot
 
-> One HTTP service, six forecast types, five foundation time-series models, zero ceremony.
+> One HTTP service, two model families:
+> - **Foundation time-series**: 5 zero-shot forecasters (chronos-2, timesfm-2.5, moirai-2, toto-1, sundial-base-128m) across 6 forecast types under `/v1/timeseries/<type>/`
+> - **Tabular ML**: 9 supervised learners (lightgbm, xgboost, hist-gbt, random-forest, logistic, mlp, svm-rbf, knn, naive-bayes) + 3 meta-learners (calibrated / stacking / diversified) under `/v1/tabular/`
 
-`POST /v1/univariate/forecast` with `{"model": "chronos-2", "context": [[...]], "config": {"horizon": 24}}` → quantile forecast back. Swap the slug — `chronos-2`, `timesfm-2.5`, `moirai-2`, `toto-1`, `sundial-base-128m` — and the wire shape stays identical.
+`POST /v1/timeseries/univariate/forecast` with `{"model": "chronos-2", "context": [[...]], "config": {"horizon": 24}}` → quantile forecast back. Swap the slug — `chronos-2`, `timesfm-2.5`, `moirai-2`, `toto-1`, `sundial-base-128m` — and the wire shape stays identical.
 
-Need richer modalities? Same wire family, different URL prefix: `/v1/multivariate`, `/v1/covariates/past`, `/v1/covariates/future`, `/v1/covariates`, `/v1/samples`. Each type advertises its own member-model list at `/v1/<type>/models`, accepts forecasts at `/v1/<type>/forecast`, and exposes a per-type ensemble at `/v1/<type>/forecast/ensemble`. A model either belongs to a type or it doesn't — no silent "this slug can't actually do that".
+Need richer modalities? Same wire family, different URL prefix: `/v1/timeseries/multivariate`, `/v1/timeseries/covariates/past`, `/v1/timeseries/covariates/future`, `/v1/timeseries/covariates`, `/v1/timeseries/samples`. Each type advertises its own member-model list at `/v1/<type>/models`, accepts forecasts at `/v1/<type>/forecast`, and exposes a per-type ensemble at `/v1/<type>/forecast/ensemble`. A model either belongs to a type or it doesn't — no silent "this slug can't actually do that".
 
-MCP streamable-http server at `/mcp` exposes one named tool per (type, model) cell — `forecast_univariate_chronos_2`, `forecast_multivariate_moirai_2`, `forecast_samples_toto_1`, etc. — plus a per-type `forecast_<type>_ensemble` and `list_<type>_models`. 26 tools total.
+Need direction / value / quantile prediction from your OWN features (engineered indicators, signals, embeddings)? `POST /v1/tabular/train` to fit a backend on labeled history, `POST /v1/tabular/forecast` to apply it to the current snapshot. Models persist server-side under your chosen `modelId`. The same shape carries through to `/v1/tabular/forecast/ensemble` (combine stored models) and the 3 meta-learners (`/v1/tabular/train/{calibrated,stacking,diversified}`).
+
+MCP streamable-http server at `/mcp` exposes one named tool per (type, model) cell — `forecast_univariate_chronos_2`, `forecast_multivariate_moirai_2`, `forecast_samples_toto_1`, etc. — plus a per-type `forecast_<type>_ensemble` and `list_<type>_models`.
 
 ## Quick start
 
@@ -19,7 +23,7 @@ docker run -d --name predictalot \
 
 # First call to a model downloads its weights into /models (~50-800MB each).
 # Subsequent calls are fast. Bind-mount /models to persist across restarts.
-curl -s http://localhost:8080/v1/univariate/forecast \
+curl -s http://localhost:8080/v1/timeseries/univariate/forecast \
   -H "Authorization: Bearer changeme" \
   -H "Content-Type: application/json" \
   -d '{
@@ -31,7 +35,7 @@ curl -s http://localhost:8080/v1/univariate/forecast \
 # Ensemble — run several univariate models in parallel, get a weighted mean
 # PLUS each contributing model's individual forecast. Weight `0` disables a
 # model.
-curl -s http://localhost:8080/v1/univariate/forecast/ensemble \
+curl -s http://localhost:8080/v1/timeseries/univariate/forecast/ensemble \
   -H "Authorization: Bearer changeme" \
   -H "Content-Type: application/json" \
   -d '{
@@ -68,18 +72,18 @@ Each row is one URL prefix. The members column lists which model slugs implement
 
 | Type | Base URL | Members | Request shape | Response shape |
 |---|---|---|---|---|
-| univariate | `/v1/univariate` | chronos-2, timesfm-2.5, moirai-2, toto-1, sundial-base-128m | `context: float[series][time]` | quantiles per series |
-| multivariate | `/v1/multivariate` | chronos-2, moirai-2, toto-1 | `context: float[series][channel][time]` | quantiles per (series, channel) |
-| covariates (past only) | `/v1/covariates/past` | chronos-2, moirai-2 | univariate target + `pastCovariates: list[dict[name, float[time]]]` | quantiles per series |
-| covariates (future only) | `/v1/covariates/future` | chronos-2 | univariate target + `futureCovariates: list[dict[name, float[horizon]]]` | quantiles per series |
-| covariates (past + future) | `/v1/covariates` | chronos-2 | univariate target + `pastCovariates` + `futureCovariates` | quantiles per series |
-| samples | `/v1/samples` | toto-1, sundial-base-128m | univariate target + `numSamples` | `samples: float[series][sample][time]` (raw paths) |
+| univariate | `/v1/timeseries/univariate` | chronos-2, timesfm-2.5, moirai-2, toto-1, sundial-base-128m | `context: float[series][time]` | quantiles per series |
+| multivariate | `/v1/timeseries/multivariate` | chronos-2, moirai-2, toto-1 | `context: float[series][channel][time]` | quantiles per (series, channel) |
+| covariates (past only) | `/v1/timeseries/covariates/past` | chronos-2, moirai-2 | univariate target + `pastCovariates: list[dict[name, float[time]]]` | quantiles per series |
+| covariates (future only) | `/v1/timeseries/covariates/future` | chronos-2 | univariate target + `futureCovariates: list[dict[name, float[horizon]]]` | quantiles per series |
+| covariates (past + future) | `/v1/timeseries/covariates` | chronos-2 | univariate target + `pastCovariates` + `futureCovariates` | quantiles per series |
+| samples | `/v1/timeseries/samples` | toto-1, sundial-base-128m | univariate target + `numSamples` | `samples: float[series][sample][time]` (raw paths) |
 
 Every base URL exposes the same three sub-paths: `<base>/forecast`, `<base>/forecast/ensemble`, `<base>/models`.
 
 **Cross-combos deferred** (multivariate-covariates, multivariate-samples) — chronos-2 + toto-1 can do them natively; ship as separate types in v0.3 if asked.
 
-## API — univariate (`/v1/univariate/forecast`)
+## API — univariate (`/v1/timeseries/univariate/forecast`)
 
 The smallest and most common shape: one or more 1D series, return quantile forecasts.
 
@@ -105,6 +109,7 @@ The smallest and most common shape: one or more 1D series, return quantile forec
 | `config.horizon` | yes | — | Steps into the future to forecast. Per-model upper bounds (see Per-model quirks). |
 | `config.quantileLevels` | no | `[0.1, 0.5, 0.9]` | Subset of `{0.1, 0.2, ..., 0.9}` (the only levels every model supports). |
 | `config.contextLength` | no | per-model (2048 / 2048 / 4000 / 4096 / 2880) | Max history points to feed the model. Longer inputs sliced to the last N. |
+| `config.extra` | no | `null` | Per-backend escape hatch — free-form `dict[str, Any]` passed through to the underlying model adapter. Keys backends understand are documented per backend; unknown keys are silently dropped (forward compat). Today's adapters mostly accept but no-op these; concrete keys land per backend over time. |
 | `unload` | no | `false` | Tear down the model after this response (frees RAM/VRAM immediately). |
 
 ### Response
@@ -125,12 +130,12 @@ The smallest and most common shape: one or more 1D series, return quantile forec
 
 `median` is always present — best-guess point forecast. For most backends (Moirai-2, Toto-1, Sundial), `quantiles["0.5"]` and `median` are the same value (both derived from sample paths). **Chronos-2 is the exception**: its `median` is the mean of the predictive distribution (E[X]) returned by `predict_quantiles`, not the strict 50th percentile, so `median` and `quantiles["0.5"]` can differ for asymmetric distributions.
 
-### Ensemble — `POST /v1/univariate/forecast/ensemble`
+### Ensemble — `POST /v1/timeseries/univariate/forecast/ensemble`
 
 Run every member of the type in parallel and combine into a weighted-mean forecast. Returns the ensemble + every contributing model's individual forecast, so you can inspect dissent or post-process.
 
 ```bash
-curl -s http://localhost:8080/v1/univariate/forecast/ensemble \
+curl -s http://localhost:8080/v1/timeseries/univariate/forecast/ensemble \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{
     "context": [[1.0, 2.0, 3.0, 4.0, 5.0]],
@@ -143,11 +148,12 @@ curl -s http://localhost:8080/v1/univariate/forecast/ensemble \
   }' | jq
 ```
 
-Request shape — same as the per-model `/v1/univariate/forecast` minus `model`, plus an optional `weights` map:
+Request shape — same as the per-model `/v1/timeseries/univariate/forecast` minus `model`, plus an optional `weights` map:
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `weights` | `{slug: float}` | uniform 1.0 | Non-negative per-model weights restricted to type members. Normalized internally (any positive numbers work). Weight `0` skips that model entirely (not called — that's how you disable a model). Unknown slug for this type → 400. Omitted entry → weight 1.0. |
+| `memberOverrides` | `{slug: {field: value}}` | `null` | Per-member shadow of the global `config`. Map a slug to a partial config dict; any key present overrides the global value for THAT member only. Use to give different members different `contextLength`, `extra` knobs, etc. in a single ensemble call. Unknown slugs in the override map are silently ignored (you can pass project-wide overrides without curating per-call). Example: `{"chronos-2": {"contextLength": 512, "extra": {"batch_size": 8}}, "timesfm-2.5": {"extra": {"normalize_inputs": true}}}`. |
 
 Response adds three fields on top of the standard per-type forecast shape:
 
@@ -157,17 +163,17 @@ Response adds three fields on top of the standard per-type forecast shape:
 | `weights` | The **normalized** weight per model that was applied to the average. |
 | `individual` | `{slug: full forecast result}` map — each entry has `model`, `horizon`, `quantileLevels`, `median`, `quantiles`, **and `weight`** (mirrors the top-level `weights[slug]`). |
 
-Failure of any one **included** model fails the whole call. The same ensemble pattern applies to every other type — `/v1/multivariate/forecast/ensemble`, `/v1/covariates/past/forecast/ensemble`, etc. The wire shapes match each type's per-model response.
+Failure of any one **included** model fails the whole call. The same ensemble pattern applies to every other type — `/v1/timeseries/multivariate/forecast/ensemble`, `/v1/timeseries/covariates/past/forecast/ensemble`, etc. The wire shapes match each type's per-model response.
 
 ### Per-model quirks
 
 - **chronos-2** — native arbitrary-quantile output. No restrictions beyond `{0.1, ..., 0.9}`. Returns `list[Tensor]` (one per series, multivariate-shaped); we squeeze the channel axis for univariate output.
 - **timesfm-2.5** — compile-time `max_horizon` (default 512, must be multiple of 128). Request horizon > max → 400. Bump via `PREDICTALOT_TIMESFM_MAX_HORIZON` and restart. We bypass the library's built-in padding (mask=True path produces NaN at this commit) and edge-pad short inputs ourselves.
 - **moirai-2** — fixed 9-quantile output `{0.1..0.9}`; we filter to your requested subset. Wrapper context/horizon are baked at model-load time (`PREDICTALOT_MOIRAI_MAX_CONTEXT` / `_MAX_HORIZON`). Per-request inputs are zero-padded to the wrapper's context length with a `past_is_pad` mask.
-- **toto-1** — multivariate-native. Univariate calls run as a single-channel series. Quantiles via Monte-Carlo sampling (256 draws → empirical percentiles); the same draws drive `/v1/samples/forecast` when called via that type. Returns `[batch, channels, horizon]` shape; we squeeze leading dims for univariate output.
+- **toto-1** — multivariate-native. Univariate calls run as a single-channel series. Quantiles via Monte-Carlo sampling (256 draws → empirical percentiles); the same draws drive `/v1/timeseries/samples/forecast` when called via that type. Returns `[batch, channels, horizon]` shape; we squeeze leading dims for univariate output.
 - **sundial-base-128m** — runs in its own sidecar process. From the API surface it's identical to the others. Generative sampling (`num_samples=64` by default, tune via `PREDICTALOT_SUNDIAL_NUM_SAMPLES`). First request waits for the sidecar to be reachable on its unix socket — usually <2s after container start.
 
-## API — multivariate (`/v1/multivariate/forecast`)
+## API — multivariate (`/v1/timeseries/multivariate/forecast`)
 
 Each series carries multiple correlated channels (variates). Channels are forecast jointly per series.
 
@@ -212,9 +218,9 @@ Each series carries multiple correlated channels (variates). Channels are foreca
 
 `median` and each `quantiles[level]` are shaped `[series][channel][time]`.
 
-Ensemble is `POST /v1/multivariate/forecast/ensemble` — same `weights` semantics as univariate, restricted to multivariate members.
+Ensemble is `POST /v1/timeseries/multivariate/forecast/ensemble` — same `weights` semantics as univariate, restricted to multivariate members.
 
-## API — covariates: past only (`/v1/covariates/past/forecast`)
+## API — covariates: past only (`/v1/timeseries/covariates/past/forecast`)
 
 Forecast a univariate target conditioned on covariates whose values are known up to *now* but not into the future (e.g. observed temperature, observed promo flag).
 
@@ -244,7 +250,7 @@ Forecast a univariate target conditioned on covariates whose values are known up
 
 Same shape as univariate (`median` and `quantiles[level]` are `[series][time]`).
 
-## API — covariates: future only (`/v1/covariates/future/forecast`)
+## API — covariates: future only (`/v1/timeseries/covariates/future/forecast`)
 
 Forecast a univariate target conditioned on covariates known *only* over the future window (e.g. a planned price, a scheduled promotion, a weather forecast). The covariate value array per series must have length `horizon`.
 
@@ -263,7 +269,7 @@ Forecast a univariate target conditioned on covariates known *only* over the fut
 
 Only `chronos-2` implements this type in v0.2. Response shape matches univariate. The per-type ensemble endpoint exists for API symmetry — with a single member it's a degenerate single-result wrapper.
 
-## API — covariates: past + future (`/v1/covariates/forecast`)
+## API — covariates: past + future (`/v1/timeseries/covariates/forecast`)
 
 Forecast a univariate target with covariates that are observed up to *now* AND known into the future (e.g. `price`: known historical, known planned).
 
@@ -287,7 +293,7 @@ Forecast a univariate target with covariates that are observed up to *now* AND k
 
 Only `chronos-2` implements this type in v0.2. Response shape matches univariate.
 
-## API — samples (`/v1/samples/forecast`)
+## API — samples (`/v1/timeseries/samples/forecast`)
 
 Returns raw Monte-Carlo sample paths instead of quantile summaries. Use this when you need joint distributions across timesteps, custom risk metrics, or scenario analysis on the actual draws.
 
@@ -325,7 +331,7 @@ Returns raw Monte-Carlo sample paths instead of quantile summaries. Use this whe
 | `samples` | `[series][sample][time]` | Raw draws — order is not stable across calls. |
 | `median` | `[series][time]` | Convenience: per-step median across the sample axis. |
 
-### Samples ensemble (`/v1/samples/forecast/ensemble`)
+### Samples ensemble (`/v1/timeseries/samples/forecast/ensemble`)
 
 Weights control how many sample paths each model contributes. Per-member share is `max(1, round(weight * numSamples))` — a minority member with a small weight still contributes at least one path, so the ensemble never silently drops a model. Final `samples` is the concatenation of every member's draws along the sample axis; `median` is recomputed across the pooled paths.
 
@@ -345,7 +351,7 @@ Every type advertises its members at `GET /v1/<type>/models`. Same bearer-token 
 
 ```bash
 curl -s -H "Authorization: Bearer changeme" \
-    http://localhost:8080/v1/univariate/models | jq
+    http://localhost:8080/v1/timeseries/univariate/models | jq
 ```
 
 ```json
@@ -367,6 +373,83 @@ curl -s -H "Authorization: Bearer changeme" \
 ```
 
 A model that supports multiple types appears in every relevant listing (e.g. `chronos-2` shows up in all six). The `loaded` / `lastUsedSecsAgo` fields are shared across listings — there's one backend per slug, not one per type.
+
+## API — tabular (`/v1/tabular`)
+
+Supervised tabular learning over your own engineered features. Train on labeled history, persist by `modelId`, forecast on the latest snapshot. Three modes:
+
+- `direction` — classification: `sign(target[t+h] - target[t])`. Response: `probUp` per series.
+- `value` — regression of `target[t+h]`. Response: `predicted` per series.
+- `quantile` — quantile regression. Response: `median` + `quantiles[level]` per series.
+
+Nine backends ship, grouped by `category`:
+
+| slug | category | family | quantile mode |
+|---|---|---|---|
+| `lightgbm` | boosting | gradient-boosted trees | native (loss="quantile") |
+| `xgboost` | boosting | gradient-boosted trees | native |
+| `hist-gbt` | boosting | sklearn HistGradientBoosting | native |
+| `random-forest` | bagging | sklearn RandomForest | per-tree empirical quantile |
+| `logistic` | linear | logistic / ridge / QuantileRegressor | native |
+| `mlp` | neural | sklearn MLP | residual-quantile band |
+| `svm-rbf` | kernel | sklearn SVC/SVR (RBF kernel) | residual-quantile band |
+| `knn` | distance | k-Nearest Neighbors | per-neighbor empirical |
+| `naive-bayes` | independence | GaussianNB + BayesianRidge | residual band |
+
+```bash
+# 1. Train
+curl -s http://localhost:8080/v1/tabular/train \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "modelId": "btc-direction-h3",
+    "backend": "lightgbm",
+    "target":   [[ 50000, 50500, 50200, ... ]],
+    "features": [{"rsi": [55, 58, ...], "macd_hist": [0.3, 0.4, ...], "ema21_dist": [0.01, 0.02, ...]}],
+    "config":   {
+      "mode": "direction", "horizon": 3,
+      "nEstimators": 400, "learningRate": 0.05, "maxDepth": 6
+    }
+  }' | jq
+
+# 2. Forecast on the LATEST bar's features
+curl -s http://localhost:8080/v1/tabular/forecast \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "modelId": "btc-direction-h3",
+    "features": [{"rsi": [58], "macd_hist": [0.4], "ema21_dist": [0.02]}]
+  }' | jq
+# → {"probUp": [0.67], "confidence": [0.34], ...}
+
+# 3. Available backends + their categories
+curl -s http://localhost:8080/v1/tabular/backends \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+### Train config
+
+| Field | Required | Notes |
+|---|---|---|
+| `mode` | yes | `"direction"` \| `"value"` \| `"quantile"` |
+| `horizon` | yes | Bars ahead. Label is `target[t+h]` (or its sign for direction). |
+| `quantileLevels` | mode=quantile | Subset of `{0.1..0.9}`. |
+| `nEstimators`, `maxDepth`, `learningRate`, `numLeaves`, `minSamples`, `randomState` | no | Tier-1 cross-backend GBT knobs. Backends ignore irrelevant fields. |
+| `categoricalFeatures` | no | List of feature names to mark categorical (GBTs use specialized splits; other backends ignore). |
+| `monotonicConstraints` | no | `{featureName: -1\|0\|+1}` direction constraints (GBTs only). |
+| `classWeight` | no | `"balanced"` \| `{className: weight}` — for classifiers. |
+| `sampleWeight` | no | Per-row weight list (same length as target). |
+| `earlyStoppingRounds`, `validationFraction` | no | GBT early-stop patience + holdout fraction. |
+| `extra` | no | Per-backend escape hatch — e.g. `mlp` reads `hidden_layer_sizes`, `svm-rbf` reads `C` / `gamma`, `knn` reads `n_neighbors`. Each backend documents its accepted keys in source. |
+
+### Ensemble + meta-learners
+
+- **`POST /v1/tabular/forecast/ensemble`** — combine multiple stored models on the same features. Same `weights` semantics as the FM ensembles.
+- **`POST /v1/tabular/train/calibrated`** — train a base learner + post-hoc Platt/isotonic calibrator on a held-out tail. Direction-mode only. Output probabilities become well-calibrated (model says 0.7 → 70% of those calls actually go up). Forecast at `/v1/tabular/forecast/calibrated`.
+- **`POST /v1/tabular/train/stacking`** — fit K base learners + a meta-learner on K-fold OOF predictions. Direction-mode v1. Forecast at `/v1/tabular/forecast/stacking`.
+- **`POST /v1/tabular/train/diversified`** — fit K candidates, score per-candidate OOF performance, greedily pick a subset with low pairwise correlation, equal-weight the survivors. All three modes. Forecast at `/v1/tabular/forecast/diversified`.
+
+### Storage
+
+Trained models persist under `/models/tabular/{modelId}/` (one metadata JSON + one blob). `GET /v1/tabular/models` lists them; `DELETE /v1/tabular/models/{id}` removes one. Lifetime survives container restarts — bind-mount `/models` to persist across container replacement.
 
 ## Error contract
 
@@ -404,7 +487,7 @@ Two shapes — application errors return a human-readable string; Pydantic valid
 
 ## MCP — `/mcp`
 
-Streamable-HTTP MCP server. Same auth as HTTP (bearer header or `?apiToken=...` query). 26 tools, organized by forecast type. The tool surface is identical to the HTTP API — one named tool per (type, model) cell in the matrix.
+Streamable-HTTP MCP server. Same auth as HTTP (bearer header or `?apiToken=...` query). Tools are organized by forecast type — one named tool per (type, model) cell in the FM matrix, plus a per-type ensemble + listing tool. MCP currently surfaces the FM timeseries side only; the tabular endpoints are HTTP-only.
 
 Naming convention:
 - `forecast_<type>_<model>` — single-model forecast. Examples: `forecast_univariate_chronos_2`, `forecast_multivariate_moirai_2`, `forecast_samples_toto_1`.
@@ -595,7 +678,7 @@ make bench             # accuracy + latency benchmark on real public datasets
 
 `make test-integration` auto-detects CUDA (via `docker info | grep nvidia`) and uses the matching image with `--gpus all` if available. Models cache to `tests/integration/.fixtures/models/` (gitignored). Integration tests cover every type endpoint × member model plus per-type ensemble + unload flag + CUDA detection.
 
-`make bench` requires a running container reachable at `PREDICTALOT_BENCH_URL` (default `http://127.0.0.1:18080`) with bearer token in `PREDICTALOT_BENCH_TOKEN` (default `devtok`). Compares each individual model against the seasonal-naive baseline and several weighted-ensemble variants on six datasets (three academic + three real-world public APIs: NOAA CO2, Binance gold/BTC). All bench calls go through `/v1/univariate/forecast`.
+`make bench` requires a running container reachable at `PREDICTALOT_BENCH_URL` (default `http://127.0.0.1:18080`) with bearer token in `PREDICTALOT_BENCH_TOKEN` (default `devtok`). Compares each individual model against the seasonal-naive baseline and several weighted-ensemble variants on six datasets (three academic + three real-world public APIs: NOAA CO2, Binance gold/BTC). All bench calls go through `/v1/timeseries/univariate/forecast`.
 
 `make pkg-*` targets follow the supply-chain age-gate pattern: every dep mutation bumps `[tool.uv] exclude-newer` to today's UTC midnight first, so brand-new (potentially compromised) package versions are refused at install time.
 
@@ -632,7 +715,7 @@ Run `osv-scanner` against the image before deployment if you want a fresh adviso
 
 ### Maybe in v0.3
 
-- **Cross-combo types** — `/v1/multivariate/covariates/...` and `/v1/multivariate/samples/forecast` if anyone asks. chronos-2 + toto-1 do these natively; the per-type registry pattern absorbs them cleanly.
+- **Cross-combo types** — `/v1/timeseries/multivariate/covariates/...` and `/v1/timeseries/multivariate/samples/forecast` if anyone asks. chronos-2 + toto-1 do these natively; the per-type registry pattern absorbs them cleanly.
 - **Toto-2.0** (released April 2026) — newer architecture, top-3 on GIFT-Eval CRPS. Blocked by torch 2.5+ requirement (uni2ts cap). Watch for PyPI packaging; currently git-only.
 - **More sidecar models** — the pattern is in place; adding e.g. ibm-granite's TTM-r2 or FlowState requires a new venv + worker module, no architectural change.
 

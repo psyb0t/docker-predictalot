@@ -174,6 +174,70 @@ async def _maybe_unload(slug: str, unload_after: bool) -> None:
         log.exception("unload after request failed for %s", slug)
 
 
+# ─── extras + per-member override helpers ───────────────────────────────────
+
+
+def _resolve_extra(extra: dict[str, Any] | None) -> dict[str, Any]:
+    """Coerce a possibly-None extra dict into a plain dict for backends."""
+    return dict(extra) if extra else {}
+
+
+def _member_override(
+    slug: str,
+    overrides: dict[str, dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Return the per-member override dict for `slug` (empty if none)."""
+    if not overrides:
+        return {}
+    if slug in overrides and isinstance(overrides[slug], dict):
+        return dict(overrides[slug])
+    return {}
+
+
+def _merge_member_config(
+    slug: str,
+    *,
+    global_context_length: int | None,
+    global_quantile_levels: list[float] | None,
+    global_extra: dict[str, Any] | None,
+    overrides: dict[str, dict[str, Any]] | None,
+) -> tuple[int, list[float] | None, dict[str, Any]]:
+    """Compute the EFFECTIVE (context_length, quantile_levels, extra)
+    for a single ensemble member, given the global config + an optional
+    per-member override map.
+
+    Override map shape: ``{slug: {contextLength?: int, quantileLevels?,
+    extra?: {...}}}``. Each present key replaces the global value FOR
+    THAT MEMBER ONLY. Other members continue using globals.
+
+    Quantile levels are pinned to the global value if not overridden so
+    every member returns the same quantile set (the ensemble averages
+    quantile-by-quantile).
+    """
+    ov = _member_override(slug, overrides)
+    # camelCase + snake_case both accepted in the override dict so
+    # callers don't have to remember which alias the wire uses.
+    ctx_override = ov.get("context_length", ov.get("contextLength"))
+    q_override = ov.get("quantile_levels", ov.get("quantileLevels"))
+    extra_override = ov.get("extra")
+
+    ctx = _resolve_ctx_len(
+        slug,
+        ctx_override if ctx_override is not None else global_context_length,
+    )
+    q = (
+        _resolve_quantiles(q_override)
+        if q_override is not None
+        else _resolve_quantiles(global_quantile_levels)
+    )
+
+    # Extras merge: per-member values override globals key-by-key.
+    eff_extra = _resolve_extra(global_extra)
+    if extra_override:
+        eff_extra.update(extra_override)
+    return ctx, q, eff_extra
+
+
 # ─── univariate ──────────────────────────────────────────────────────────────
 
 
@@ -184,6 +248,7 @@ async def dispatch_univariate(
     quantile_levels: list[float] | None,
     context_length: int | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _check_model_for_type(model, types.TYPE_UNIVARIATE)
     _check_horizon(horizon)
@@ -192,7 +257,9 @@ async def dispatch_univariate(
     ctx = _resolve_ctx_len(model, context_length)
 
     backend = models.get(model)
-    result = await backend.predict_univariate(context, horizon, q, ctx)
+    result = await backend.predict_univariate(
+        context, horizon, q, ctx, extra=_resolve_extra(extra),
+    )
     await _maybe_unload(model, unload_after)
     return result
 
@@ -204,6 +271,8 @@ async def ensemble_univariate(
     context_length: int | None,
     weights: dict[str, float] | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
+    member_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     _check_horizon(horizon)
     _validate_context_1d(context)
@@ -211,8 +280,16 @@ async def ensemble_univariate(
     norm = _resolve_weights(types.TYPE_UNIVARIATE, weights)
 
     async def _one(slug: str) -> dict[str, Any]:
-        ctx = _resolve_ctx_len(slug, context_length)
-        out = await models.get(slug).predict_univariate(context, horizon, q, ctx)
+        ctx, q_eff, eff_extra = _merge_member_config(
+            slug,
+            global_context_length=context_length,
+            global_quantile_levels=quantile_levels,
+            global_extra=extra,
+            overrides=member_overrides,
+        )
+        out = await models.get(slug).predict_univariate(
+            context, horizon, q_eff, ctx, extra=eff_extra,
+        )
         await _maybe_unload(slug, unload_after)
         return out
 
@@ -260,6 +337,7 @@ async def dispatch_multivariate(
     quantile_levels: list[float] | None,
     context_length: int | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _check_model_for_type(model, types.TYPE_MULTIVARIATE)
     _check_horizon(horizon)
@@ -268,7 +346,7 @@ async def dispatch_multivariate(
     ctx = _resolve_ctx_len(model, context_length)
 
     backend = models.get(model)
-    result = await backend.predict_multivariate(context, horizon, q, ctx)
+    result = await backend.predict_multivariate(context, horizon, q, ctx, extra=_resolve_extra(extra))
     await _maybe_unload(model, unload_after)
     return result
 
@@ -280,6 +358,8 @@ async def ensemble_multivariate(
     context_length: int | None,
     weights: dict[str, float] | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
+    member_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     _check_horizon(horizon)
     _validate_context_2d(context)
@@ -287,8 +367,14 @@ async def ensemble_multivariate(
     norm = _resolve_weights(types.TYPE_MULTIVARIATE, weights)
 
     async def _one(slug: str) -> dict[str, Any]:
-        ctx = _resolve_ctx_len(slug, context_length)
-        out = await models.get(slug).predict_multivariate(context, horizon, q, ctx)
+        ctx, q_eff, eff_extra = _merge_member_config(
+            slug,
+            global_context_length=context_length,
+            global_quantile_levels=quantile_levels,
+            global_extra=extra,
+            overrides=member_overrides,
+        )
+        out = await models.get(slug).predict_multivariate(context, horizon, q_eff, ctx, extra=eff_extra)
         await _maybe_unload(slug, unload_after)
         return out
 
@@ -344,6 +430,7 @@ async def dispatch_covariates_past(
     quantile_levels: list[float] | None,
     context_length: int | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _check_model_for_type(model, types.TYPE_COVARIATES_PAST)
     _check_horizon(horizon)
@@ -353,7 +440,7 @@ async def dispatch_covariates_past(
     ctx = _resolve_ctx_len(model, context_length)
 
     backend = models.get(model)
-    result = await backend.predict_covariates_past(context, past_covariates, horizon, q, ctx)
+    result = await backend.predict_covariates_past(context, past_covariates, horizon, q, ctx, extra=_resolve_extra(extra))
     await _maybe_unload(model, unload_after)
     return result
 
@@ -366,6 +453,8 @@ async def ensemble_covariates_past(
     context_length: int | None,
     weights: dict[str, float] | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
+    member_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     _check_horizon(horizon)
     _validate_context_1d(context)
@@ -374,10 +463,14 @@ async def ensemble_covariates_past(
     norm = _resolve_weights(types.TYPE_COVARIATES_PAST, weights)
 
     async def _one(slug: str) -> dict[str, Any]:
-        ctx = _resolve_ctx_len(slug, context_length)
-        out = await models.get(slug).predict_covariates_past(
-            context, past_covariates, horizon, q, ctx
+        ctx, q_eff, eff_extra = _merge_member_config(
+            slug,
+            global_context_length=context_length,
+            global_quantile_levels=quantile_levels,
+            global_extra=extra,
+            overrides=member_overrides,
         )
+        out = await models.get(slug).predict_covariates_past(context, past_covariates, horizon, q_eff, ctx, extra=eff_extra)
         await _maybe_unload(slug, unload_after)
         return out
 
@@ -395,6 +488,7 @@ async def dispatch_covariates_future(
     quantile_levels: list[float] | None,
     context_length: int | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _check_model_for_type(model, types.TYPE_COVARIATES_FUTURE)
     _check_horizon(horizon)
@@ -404,9 +498,7 @@ async def dispatch_covariates_future(
     ctx = _resolve_ctx_len(model, context_length)
 
     backend = models.get(model)
-    result = await backend.predict_covariates_future(
-        context, future_covariates, horizon, q, ctx
-    )
+    result = await backend.predict_covariates_future(context, future_covariates, horizon, q, ctx, extra=_resolve_extra(extra))
     await _maybe_unload(model, unload_after)
     return result
 
@@ -419,6 +511,8 @@ async def ensemble_covariates_future(
     context_length: int | None,
     weights: dict[str, float] | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
+    member_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     _check_horizon(horizon)
     _validate_context_1d(context)
@@ -427,10 +521,14 @@ async def ensemble_covariates_future(
     norm = _resolve_weights(types.TYPE_COVARIATES_FUTURE, weights)
 
     async def _one(slug: str) -> dict[str, Any]:
-        ctx = _resolve_ctx_len(slug, context_length)
-        out = await models.get(slug).predict_covariates_future(
-            context, future_covariates, horizon, q, ctx
+        ctx, q_eff, eff_extra = _merge_member_config(
+            slug,
+            global_context_length=context_length,
+            global_quantile_levels=quantile_levels,
+            global_extra=extra,
+            overrides=member_overrides,
         )
+        out = await models.get(slug).predict_covariates_future(context, future_covariates, horizon, q_eff, ctx, extra=eff_extra)
         await _maybe_unload(slug, unload_after)
         return out
 
@@ -449,6 +547,7 @@ async def dispatch_covariates(
     quantile_levels: list[float] | None,
     context_length: int | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _check_model_for_type(model, types.TYPE_COVARIATES_BOTH)
     _check_horizon(horizon)
@@ -459,9 +558,7 @@ async def dispatch_covariates(
     ctx = _resolve_ctx_len(model, context_length)
 
     backend = models.get(model)
-    result = await backend.predict_covariates_both(
-        context, past_covariates, future_covariates, horizon, q, ctx
-    )
+    result = await backend.predict_covariates_both(context, past_covariates, future_covariates, horizon, q, ctx, extra=_resolve_extra(extra))
     await _maybe_unload(model, unload_after)
     return result
 
@@ -475,6 +572,8 @@ async def ensemble_covariates(
     context_length: int | None,
     weights: dict[str, float] | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
+    member_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     _check_horizon(horizon)
     _validate_context_1d(context)
@@ -484,10 +583,14 @@ async def ensemble_covariates(
     norm = _resolve_weights(types.TYPE_COVARIATES_BOTH, weights)
 
     async def _one(slug: str) -> dict[str, Any]:
-        ctx = _resolve_ctx_len(slug, context_length)
-        out = await models.get(slug).predict_covariates_both(
-            context, past_covariates, future_covariates, horizon, q, ctx
+        ctx, q_eff, eff_extra = _merge_member_config(
+            slug,
+            global_context_length=context_length,
+            global_quantile_levels=quantile_levels,
+            global_extra=extra,
+            overrides=member_overrides,
         )
+        out = await models.get(slug).predict_covariates_both(context, past_covariates, future_covariates, horizon, q_eff, ctx, extra=eff_extra)
         await _maybe_unload(slug, unload_after)
         return out
 
@@ -507,6 +610,7 @@ async def dispatch_samples(
     num_samples: int | None,
     context_length: int | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _check_model_for_type(model, types.TYPE_SAMPLES)
     _check_horizon(horizon)
@@ -517,7 +621,9 @@ async def dispatch_samples(
     ctx = _resolve_ctx_len(model, context_length)
 
     backend = models.get(model)
-    result = await backend.predict_samples(context, horizon, n, ctx)
+    result = await backend.predict_samples(
+        context, horizon, n, ctx, extra=_resolve_extra(extra),
+    )
     await _maybe_unload(model, unload_after)
     return result
 
@@ -529,6 +635,8 @@ async def ensemble_samples(
     context_length: int | None,
     weights: dict[str, float] | None,
     unload_after: bool,
+    extra: dict[str, Any] | None = None,
+    member_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     _check_horizon(horizon)
     _validate_context_1d(context)
@@ -544,8 +652,16 @@ async def ensemble_samples(
         per_member[slug] = share
 
     async def _one(slug: str) -> dict[str, Any]:
-        ctx = _resolve_ctx_len(slug, context_length)
-        out = await models.get(slug).predict_samples(context, horizon, per_member[slug], ctx)
+        ctx, _, eff_extra = _merge_member_config(
+            slug,
+            global_context_length=context_length,
+            global_quantile_levels=None,
+            global_extra=extra,
+            overrides=member_overrides,
+        )
+        out = await models.get(slug).predict_samples(
+            context, horizon, per_member[slug], ctx, extra=eff_extra,
+        )
         await _maybe_unload(slug, unload_after)
         return out
 

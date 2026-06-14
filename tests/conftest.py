@@ -110,6 +110,7 @@ def _make_fake_univariate(slug: str):
         horizon: int,
         quantile_levels: list[float],
         _context_length: int,
+        extra: dict | None = None,  # noqa: ARG001
     ) -> dict[str, Any]:
         return _univariate_payload(slug, context, horizon, quantile_levels)
 
@@ -122,6 +123,7 @@ def _make_fake_multivariate(slug: str):
         horizon: int,
         quantile_levels: list[float],
         _context_length: int,
+        extra: dict | None = None,  # noqa: ARG001
     ) -> dict[str, Any]:
         median = [
             [[_mean(channel) + t for t in range(horizon)] for channel in series]
@@ -152,6 +154,7 @@ def _make_fake_covariates_past(slug: str):
         horizon: int,
         quantile_levels: list[float],
         _context_length: int,
+        extra: dict | None = None,  # noqa: ARG001
     ) -> dict[str, Any]:
         return _univariate_payload(slug, context, horizon, quantile_levels)
 
@@ -165,6 +168,7 @@ def _make_fake_covariates_future(slug: str):
         horizon: int,
         quantile_levels: list[float],
         _context_length: int,
+        extra: dict | None = None,  # noqa: ARG001
     ) -> dict[str, Any]:
         return _univariate_payload(slug, context, horizon, quantile_levels)
 
@@ -179,6 +183,7 @@ def _make_fake_covariates_both(slug: str):
         horizon: int,
         quantile_levels: list[float],
         _context_length: int,
+        extra: dict | None = None,  # noqa: ARG001
     ) -> dict[str, Any]:
         return _univariate_payload(slug, context, horizon, quantile_levels)
 
@@ -191,6 +196,7 @@ def _make_fake_samples(slug: str):
         horizon: int,
         num_samples: int,
         _context_length: int,
+        extra: dict | None = None,  # noqa: ARG001
     ) -> dict[str, Any]:
         # Per-sample deterministic offset so individual draws are distinct.
         samples = [

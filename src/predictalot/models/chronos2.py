@@ -106,7 +106,11 @@ async def predict_univariate(
     horizon: int,
     quantile_levels: list[float],
     context_length: int,
+    extra: dict[str, Any] | None = None,  # noqa: ARG001
 ) -> dict[str, Any]:
+    # chronos-forecasting v2's predict_quantiles doesn't expose any
+    # runtime knobs we'd surface today; ``extra`` is silently accepted
+    # for forward compat with planned keys (batch_size, cross_learning).
     model = await get_model()
     async with _lock:
         result = await asyncio.to_thread(
@@ -160,6 +164,7 @@ async def predict_multivariate(
     horizon: int,
     quantile_levels: list[float],
     context_length: int,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     model = await get_model()
     async with _lock:
@@ -232,6 +237,7 @@ async def predict_covariates_past(
     horizon: int,
     quantile_levels: list[float],
     context_length: int,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return await _run_covariates(
         context=context,
@@ -249,6 +255,7 @@ async def predict_covariates_future(
     horizon: int,
     quantile_levels: list[float],
     context_length: int,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Chronos requires every future_covariate name to also appear in
     # past_covariates. For the "future-only" public type, synthesize a
@@ -284,6 +291,7 @@ async def predict_covariates_both(
     horizon: int,
     quantile_levels: list[float],
     context_length: int,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return await _run_covariates(
         context=context,

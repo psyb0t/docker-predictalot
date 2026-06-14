@@ -1,4 +1,4 @@
-"""POST /v1/samples/{forecast,forecast/ensemble} + GET /v1/samples/models.
+"""POST /v1/timeseries/samples/{forecast,forecast/ensemble} + GET /v1/timeseries/samples/models.
 
 Returns raw sample paths (one path per Monte-Carlo draw) instead of quantiles.
 Useful for callers that want to compute custom risk metrics, joint-distribution
@@ -26,7 +26,7 @@ from .schemas import (
 
 log = logging.getLogger("predictalot.routers.samples")
 
-router = APIRouter(prefix="/v1/samples", tags=["samples"])
+router = APIRouter(prefix="/v1/timeseries/samples", tags=["samples"])
 
 
 @router.post(
@@ -43,6 +43,8 @@ async def post_ensemble(body: SamplesEnsembleRequest) -> dict[str, Any]:
             context_length=body.config.context_length,
             weights=body.weights,
             unload_after=body.unload,
+            extra=body.config.extra,
+            member_overrides=body.member_overrides,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -65,6 +67,7 @@ async def post_forecast(body: SamplesRequest) -> dict[str, Any]:
             num_samples=body.config.num_samples,
             context_length=body.config.context_length,
             unload_after=body.unload,
+            extra=body.config.extra,
         )
     except (dispatch.UnknownModelError, types.UnknownTypeError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

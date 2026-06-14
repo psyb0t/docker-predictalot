@@ -7,12 +7,12 @@ Lifespan:
 
 Endpoints:
   GET  /healthz
-  POST /v1/univariate/{forecast,forecast/ensemble} + GET /v1/univariate/models
-  POST /v1/multivariate/{forecast,forecast/ensemble} + GET /v1/multivariate/models
-  POST /v1/covariates/past/{forecast,forecast/ensemble} + GET /v1/covariates/past/models
-  POST /v1/covariates/future/{forecast,forecast/ensemble} + GET /v1/covariates/future/models
-  POST /v1/covariates/{forecast,forecast/ensemble} + GET /v1/covariates/models
-  POST /v1/samples/{forecast,forecast/ensemble} + GET /v1/samples/models
+  POST /v1/timeseries/univariate/{forecast,forecast/ensemble} + GET /v1/timeseries/univariate/models
+  POST /v1/timeseries/multivariate/{forecast,forecast/ensemble} + GET /v1/timeseries/multivariate/models
+  POST /v1/timeseries/covariates/past/{forecast,forecast/ensemble} + GET /v1/timeseries/covariates/past/models
+  POST /v1/timeseries/covariates/future/{forecast,forecast/ensemble} + GET /v1/timeseries/covariates/future/models
+  POST /v1/timeseries/covariates/{forecast,forecast/ensemble} + GET /v1/timeseries/covariates/models
+  POST /v1/timeseries/samples/{forecast,forecast/ensemble} + GET /v1/timeseries/samples/models
   POST /mcp/* (streamable-http, via MCPWithAuth)
 """
 
@@ -35,6 +35,8 @@ from .routers.meta import router as meta_router
 from .routers.multivariate import router as multivariate_router
 from .routers.samples import router as samples_router
 from .routers.univariate import router as univariate_router
+from .routers.tabular import router as tabular_router
+from .routers.tabular_meta import router as tabular_meta_router
 
 log = logging.getLogger("predictalot.server")
 
@@ -225,6 +227,8 @@ app.include_router(covariates_past_router)
 app.include_router(covariates_future_router)
 app.include_router(covariates_router)
 app.include_router(samples_router)
+app.include_router(tabular_router)
+app.include_router(tabular_meta_router)
 
 
 def _mount_mcp() -> None:

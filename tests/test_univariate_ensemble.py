@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 
 HEADERS = {"Authorization": "Bearer testtoken"}
-URL = "/v1/univariate/forecast/ensemble"
+URL = "/v1/timeseries/univariate/forecast/ensemble"
 MEMBERS = ["chronos-2", "timesfm-2.5", "moirai-2", "toto-1", "sundial-base-128m"]
 
 

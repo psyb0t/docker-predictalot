@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 # Auth is enforced uniformly across every forecast endpoint; we cover the
 # univariate route as a representative — same Depends(check_bearer) wires
 # every other type router.
-URL = "/v1/univariate/forecast"
+URL = "/v1/timeseries/univariate/forecast"
 PAYLOAD = {"model": "chronos-2", "context": [[1.0, 2.0]], "config": {"horizon": 1}}
 
 

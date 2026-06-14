@@ -16,6 +16,8 @@ raw sample paths instead of quantiles.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
@@ -32,7 +34,19 @@ _WIRE_CFG = ConfigDict(
 
 
 class ForecastConfig(BaseModel):
-    """Quantile-forecast config: horizon + which quantile cuts to return."""
+    """Quantile-forecast config: horizon + which quantile cuts to return.
+
+    ``extra`` is a per-backend escape hatch: each FM backend
+    documents the keys it consumes from this dict next to its
+    ``SLUG``. Unknown keys are silently ignored. Examples:
+      * chronos-2: batchSize, crossLearning, limitPredictionLength
+      * timesfm-2.5: fixQuantileCrossing, normalizeInputs,
+        perCoreBatchSize, useContinuousQuantileHead,
+        inferIsPositive, forceFlipInvariance, windowSize,
+        returnBackcast
+      * moirai-2: moduleKwargs
+      * toto-1: samplesPerBatch, useKvCache, numSamples
+    """
 
     horizon: int = Field(..., gt=0, description="Steps into the future to forecast.")
     quantile_levels: list[float] | None = Field(
@@ -42,11 +56,26 @@ class ForecastConfig(BaseModel):
     context_length: int | None = Field(
         default=None, gt=0, description="Max history points fed to the model."
     )
+    extra: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Backend-specific kwargs forwarded to the underlying "
+            "predict call. Each backend documents the keys it reads; "
+            "unknown keys are silently ignored. Camel-cased on the "
+            "wire — backends remap to their library's expected snake "
+            "naming internally."
+        ),
+    )
     model_config = _WIRE_CFG
 
 
 class SamplesForecastConfig(BaseModel):
-    """Samples-forecast config: horizon + sample count (no quantiles)."""
+    """Samples-forecast config: horizon + sample count (no quantiles).
+
+    ``extra`` follows the same per-backend convention as
+    ForecastConfig.extra. Samples backends (toto-1, sundial-base-128m)
+    typically read samplesPerBatch, batchSize, useKvCache from here.
+    """
 
     horizon: int = Field(..., gt=0, description="Steps into the future to forecast.")
     num_samples: int | None = Field(
@@ -56,6 +85,10 @@ class SamplesForecastConfig(BaseModel):
     )
     context_length: int | None = Field(
         default=None, gt=0, description="Max history points fed to the model."
+    )
+    extra: dict[str, Any] | None = Field(
+        default=None,
+        description="Backend-specific kwargs forwarded to the predict call.",
     )
     model_config = _WIRE_CFG
 
@@ -81,6 +114,17 @@ class UnivariateEnsembleRequest(BaseModel):
         description=(
             "Per-model weight map for the ensemble. None = uniform. Unknown slugs "
             "→ 400. Weight 0 skips a model entirely."
+        ),
+    )
+    member_overrides: dict[str, dict] | None = Field(
+        default=None,
+        description=(
+            "Per-member kwargs overrides. Map slug → partial "
+            "ForecastConfig (or SamplesForecastConfig) dict. Each "
+            "key listed there overrides the global ``config`` value "
+            "for that specific member only. Use to give different "
+            "members different contextLength, extra knobs, etc. in "
+            "a single ensemble call."
         ),
     )
     unload: bool = False
@@ -138,6 +182,17 @@ class MultivariateEnsembleRequest(BaseModel):
     context: list[list[list[float]]] = Field(..., description="Shape: [series][channel][time].")
     config: ForecastConfig
     weights: dict[str, float] | None = None
+    member_overrides: dict[str, dict] | None = Field(
+        default=None,
+        description=(
+            "Per-member kwargs overrides. Map slug → partial "
+            "ForecastConfig (or SamplesForecastConfig) dict. Each "
+            "key listed there overrides the global ``config`` value "
+            "for that specific member only. Use to give different "
+            "members different contextLength, extra knobs, etc. in "
+            "a single ensemble call."
+        ),
+    )
     unload: bool = False
     model_config = _WIRE_CFG
 
@@ -194,6 +249,17 @@ class CovariatesPastEnsembleRequest(BaseModel):
     past_covariates: list[dict[str, list[float]]]
     config: ForecastConfig
     weights: dict[str, float] | None = None
+    member_overrides: dict[str, dict] | None = Field(
+        default=None,
+        description=(
+            "Per-member kwargs overrides. Map slug → partial "
+            "ForecastConfig (or SamplesForecastConfig) dict. Each "
+            "key listed there overrides the global ``config`` value "
+            "for that specific member only. Use to give different "
+            "members different contextLength, extra knobs, etc. in "
+            "a single ensemble call."
+        ),
+    )
     unload: bool = False
     model_config = _WIRE_CFG
 
@@ -226,6 +292,17 @@ class CovariatesFutureEnsembleRequest(BaseModel):
     future_covariates: list[dict[str, list[float]]]
     config: ForecastConfig
     weights: dict[str, float] | None = None
+    member_overrides: dict[str, dict] | None = Field(
+        default=None,
+        description=(
+            "Per-member kwargs overrides. Map slug → partial "
+            "ForecastConfig (or SamplesForecastConfig) dict. Each "
+            "key listed there overrides the global ``config`` value "
+            "for that specific member only. Use to give different "
+            "members different contextLength, extra knobs, etc. in "
+            "a single ensemble call."
+        ),
+    )
     unload: bool = False
     model_config = _WIRE_CFG
 
@@ -263,6 +340,17 @@ class CovariatesEnsembleRequest(BaseModel):
     future_covariates: list[dict[str, list[float]]]
     config: ForecastConfig
     weights: dict[str, float] | None = None
+    member_overrides: dict[str, dict] | None = Field(
+        default=None,
+        description=(
+            "Per-member kwargs overrides. Map slug → partial "
+            "ForecastConfig (or SamplesForecastConfig) dict. Each "
+            "key listed there overrides the global ``config`` value "
+            "for that specific member only. Use to give different "
+            "members different contextLength, extra knobs, etc. in "
+            "a single ensemble call."
+        ),
+    )
     unload: bool = False
     model_config = _WIRE_CFG
 
@@ -291,6 +379,17 @@ class SamplesEnsembleRequest(BaseModel):
         description=(
             "Per-model weight map. For samples, weight controls how many sample "
             "paths each model contributes (relative). Weight 0 skips a model."
+        ),
+    )
+    member_overrides: dict[str, dict] | None = Field(
+        default=None,
+        description=(
+            "Per-member kwargs overrides. Map slug → partial "
+            "ForecastConfig (or SamplesForecastConfig) dict. Each "
+            "key listed there overrides the global ``config`` value "
+            "for that specific member only. Use to give different "
+            "members different contextLength, extra knobs, etc. in "
+            "a single ensemble call."
         ),
     )
     unload: bool = False

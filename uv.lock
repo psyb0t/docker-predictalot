@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-05-19T00:00:00Z"
+exclude-newer = "2026-06-13T00:00:00Z"
 
 [[package]]
 name = "annotated-doc"
@@ -685,7 +685,7 @@ wheels = [
 
 [[package]]
 name = "predictalot"
-version = "0.1.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

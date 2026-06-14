@@ -1,9 +1,9 @@
-"""POST /v1/covariates/{forecast,forecast/ensemble} + GET /v1/covariates/models.
+"""POST /v1/timeseries/covariates/{forecast,forecast/ensemble} + GET /v1/timeseries/covariates/models.
 
 Past+future combined mode. Only chronos-2 supports this in v0.2.
 
 Route ordering note: this router is registered AFTER the more-specific
-/v1/covariates/past/ and /v1/covariates/future/ routers. Even so the paths
+/v1/timeseries/covariates/past/ and /v1/timeseries/covariates/future/ routers. Even so the paths
 don't collide because the per-endpoint segments (forecast, models, etc.)
 differ — but registering in the right order avoids any future ambiguity.
 """
@@ -27,7 +27,7 @@ from .schemas import (
 
 log = logging.getLogger("predictalot.routers.covariates")
 
-router = APIRouter(prefix="/v1/covariates", tags=["covariates"])
+router = APIRouter(prefix="/v1/timeseries/covariates", tags=["covariates"])
 
 
 @router.post(
@@ -46,6 +46,8 @@ async def post_ensemble(body: CovariatesEnsembleRequest) -> dict[str, Any]:
             context_length=body.config.context_length,
             weights=body.weights,
             unload_after=body.unload,
+            extra=body.config.extra,
+            member_overrides=body.member_overrides,
         )
     except (dispatch.BadQuantileLevelsError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -70,6 +72,7 @@ async def post_forecast(body: CovariatesRequest) -> dict[str, Any]:
             quantile_levels=body.config.quantile_levels,
             context_length=body.config.context_length,
             unload_after=body.unload,
+            extra=body.config.extra,
         )
     except (dispatch.UnknownModelError, types.UnknownTypeError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -161,6 +161,7 @@ async def predict_univariate(
     horizon: int,
     quantile_levels: list[float],
     context_length: int,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     await get_model()
     async with _lock:
@@ -216,6 +217,7 @@ async def predict_multivariate(
     horizon: int,
     quantile_levels: list[float],
     context_length: int,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     await get_model()
     async with _lock:
@@ -279,6 +281,7 @@ async def predict_samples(
     horizon: int,
     num_samples: int,
     context_length: int,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     await get_model()
     async with _lock:

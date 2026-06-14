@@ -33,7 +33,7 @@ class TestPerTypeModelsEndpoint:
     def test_univariate_models(self, client: TestClient) -> None:
         self._expect_members(
             client,
-            "/v1/univariate/models",
+            "/v1/timeseries/univariate/models",
             "univariate",
             ["chronos-2", "timesfm-2.5", "moirai-2", "toto-1", "sundial-base-128m"],
         )
@@ -41,7 +41,7 @@ class TestPerTypeModelsEndpoint:
     def test_multivariate_models(self, client: TestClient) -> None:
         self._expect_members(
             client,
-            "/v1/multivariate/models",
+            "/v1/timeseries/multivariate/models",
             "multivariate",
             ["chronos-2", "moirai-2", "toto-1"],
         )
@@ -49,7 +49,7 @@ class TestPerTypeModelsEndpoint:
     def test_covariates_past_models(self, client: TestClient) -> None:
         self._expect_members(
             client,
-            "/v1/covariates/past/models",
+            "/v1/timeseries/covariates/past/models",
             "covariates-past",
             ["chronos-2", "moirai-2"],
         )
@@ -57,7 +57,7 @@ class TestPerTypeModelsEndpoint:
     def test_covariates_future_models(self, client: TestClient) -> None:
         self._expect_members(
             client,
-            "/v1/covariates/future/models",
+            "/v1/timeseries/covariates/future/models",
             "covariates-future",
             ["chronos-2"],
         )
@@ -65,7 +65,7 @@ class TestPerTypeModelsEndpoint:
     def test_covariates_models(self, client: TestClient) -> None:
         self._expect_members(
             client,
-            "/v1/covariates/models",
+            "/v1/timeseries/covariates/models",
             "covariates-both",
             ["chronos-2"],
         )
@@ -73,7 +73,7 @@ class TestPerTypeModelsEndpoint:
     def test_samples_models(self, client: TestClient) -> None:
         self._expect_members(
             client,
-            "/v1/samples/models",
+            "/v1/timeseries/samples/models",
             "samples",
             ["toto-1", "sundial-base-128m"],
         )
@@ -86,12 +86,12 @@ class TestPerTypeModelsEndpoint:
         to unauthenticated callers.
         """
         for url in (
-            "/v1/univariate/models",
-            "/v1/multivariate/models",
-            "/v1/covariates/past/models",
-            "/v1/covariates/future/models",
-            "/v1/covariates/models",
-            "/v1/samples/models",
+            "/v1/timeseries/univariate/models",
+            "/v1/timeseries/multivariate/models",
+            "/v1/timeseries/covariates/past/models",
+            "/v1/timeseries/covariates/future/models",
+            "/v1/timeseries/covariates/models",
+            "/v1/timeseries/samples/models",
         ):
             resp = client.get(url)
             assert resp.status_code == 401, f"{url}: {resp.status_code} {resp.text}"
@@ -103,12 +103,12 @@ class TestPerTypeModelsEndpoint:
     ) -> None:
         """With auth disabled (ALLOW_NO_AUTH + empty token list) /models is open."""
         for url in (
-            "/v1/univariate/models",
-            "/v1/multivariate/models",
-            "/v1/covariates/past/models",
-            "/v1/covariates/future/models",
-            "/v1/covariates/models",
-            "/v1/samples/models",
+            "/v1/timeseries/univariate/models",
+            "/v1/timeseries/multivariate/models",
+            "/v1/timeseries/covariates/past/models",
+            "/v1/timeseries/covariates/future/models",
+            "/v1/timeseries/covariates/models",
+            "/v1/timeseries/samples/models",
         ):
             resp = open_client.get(url)
             assert resp.status_code == 200, f"{url}: {resp.text}"

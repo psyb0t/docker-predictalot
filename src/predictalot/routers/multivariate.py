@@ -1,4 +1,4 @@
-"""POST /v1/multivariate/{forecast,forecast/ensemble} + GET /v1/multivariate/models.
+"""POST /v1/timeseries/multivariate/{forecast,forecast/ensemble} + GET /v1/timeseries/multivariate/models.
 
 WARNING: moirai-2 multivariate is upstream-untested (see
 `.research_files/moirai2-modes.md` §footguns). Verify channel-order
@@ -24,7 +24,7 @@ from .schemas import (
 
 log = logging.getLogger("predictalot.routers.multivariate")
 
-router = APIRouter(prefix="/v1/multivariate", tags=["multivariate"])
+router = APIRouter(prefix="/v1/timeseries/multivariate", tags=["multivariate"])
 
 
 @router.post(
@@ -41,6 +41,8 @@ async def post_ensemble(body: MultivariateEnsembleRequest) -> dict[str, Any]:
             context_length=body.config.context_length,
             weights=body.weights,
             unload_after=body.unload,
+            extra=body.config.extra,
+            member_overrides=body.member_overrides,
         )
     except (dispatch.BadQuantileLevelsError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -63,6 +65,7 @@ async def post_forecast(body: MultivariateRequest) -> dict[str, Any]:
             quantile_levels=body.config.quantile_levels,
             context_length=body.config.context_length,
             unload_after=body.unload,
+            extra=body.config.extra,
         )
     except (dispatch.UnknownModelError, types.UnknownTypeError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

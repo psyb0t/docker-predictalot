@@ -117,6 +117,7 @@ async def predict_univariate(
     horizon: int,
     quantile_levels: list[float],
     context_length: int,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if horizon > config.TIMESFM_MAX_HORIZON:
         raise HorizonTooLargeError(

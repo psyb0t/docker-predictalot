@@ -22,6 +22,13 @@ gluonts==0.14.4
 chronos-forecasting==2.2.2
 uni2ts==2.0.0
 datasets==2.17.1
+# Tabular backends — train + predict at /v1/tabular/.
+# lightgbm 4.6 released 2025-12-09; xgboost 3.0 series 2025.
+# tabpfn DEFERRED: 2.2.0 caps scikit-learn<1.7 but the project pins
+# scikit-learn==1.8. Either downgrade sklearn (cascades through
+# uni2ts/gluonts) or wait for tabpfn>2.2 that bumps the cap.
+lightgbm==4.6.0
+xgboost==3.0.4
 # hydra-core + jax + scipy: pulled in transitively by uni2ts. Letting the
 # resolver pick a compatible version avoids manual-pin conflicts
 # (hydra-core has a hard `==1.3` from uni2ts; jax has a numpy>=2 cap that

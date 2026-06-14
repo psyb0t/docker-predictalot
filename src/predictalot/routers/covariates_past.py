@@ -1,4 +1,4 @@
-"""POST /v1/covariates/past/{forecast,forecast/ensemble} + GET /v1/covariates/past/models."""
+"""POST /v1/timeseries/covariates/past/{forecast,forecast/ensemble} + GET /v1/timeseries/covariates/past/models."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from .schemas import (
 
 log = logging.getLogger("predictalot.routers.covariates_past")
 
-router = APIRouter(prefix="/v1/covariates/past", tags=["covariates-past"])
+router = APIRouter(prefix="/v1/timeseries/covariates/past", tags=["covariates-past"])
 
 
 @router.post(
@@ -37,6 +37,8 @@ async def post_ensemble(body: CovariatesPastEnsembleRequest) -> dict[str, Any]:
             context_length=body.config.context_length,
             weights=body.weights,
             unload_after=body.unload,
+            extra=body.config.extra,
+            member_overrides=body.member_overrides,
         )
     except (dispatch.BadQuantileLevelsError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -60,6 +62,7 @@ async def post_forecast(body: CovariatesPastRequest) -> dict[str, Any]:
             quantile_levels=body.config.quantile_levels,
             context_length=body.config.context_length,
             unload_after=body.unload,
+            extra=body.config.extra,
         )
     except (dispatch.UnknownModelError, types.UnknownTypeError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -11,8 +11,8 @@ from fastapi.testclient import TestClient
 
 
 HEADERS = {"Authorization": "Bearer testtoken"}
-URL = "/v1/multivariate/forecast"
-ENSEMBLE_URL = "/v1/multivariate/forecast/ensemble"
+URL = "/v1/timeseries/multivariate/forecast"
+ENSEMBLE_URL = "/v1/timeseries/multivariate/forecast/ensemble"
 MEMBERS = ["chronos-2", "moirai-2", "toto-1"]
 
 

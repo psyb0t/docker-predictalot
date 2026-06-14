@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 
 
 HEADERS = {"Authorization": "Bearer testtoken"}
-URL = "/v1/covariates/forecast"
-ENSEMBLE_URL = "/v1/covariates/forecast/ensemble"
+URL = "/v1/timeseries/covariates/forecast"
+ENSEMBLE_URL = "/v1/timeseries/covariates/forecast/ensemble"
 
 
 def _payload(model: str | None = None) -> dict:
