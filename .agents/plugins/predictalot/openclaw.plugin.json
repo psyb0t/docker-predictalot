@@ -1,0 +1,39 @@
+{
+  "name": "@psyb0t/predictalot",
+  "id": "@psyb0t/predictalot",
+  "version": "0.0.0",
+  "type": "code-plugin",
+  "summary": "Wire an OpenClaw agent to a self-hosted predictalot forecasting API over MCP — zero-shot time-series forecasting plus tabular ML as tools.",
+  "description": "A thin stdio<->HTTP bridge that connects an MCP client (OpenClaw, Claude, Cursor, Codex, ...) to a running predictalot instance's MCP endpoint (/mcp), exposing its foundation-model forecasting tools: univariate / multivariate / covariate-aware / sample-path quantile forecasts across 5 zero-shot models (chronos-2, timesfm-2.5, moirai-2, toto-1, sundial-base-128m), plus per-type weighted ensembles and model listings. predictalot is self-hosted — you run the server yourself and point this bridge at it. See https://github.com/psyb0t/docker-predictalot.",
+  "extensions": ["./bin/cli.js"],
+  "compat": {
+    "pluginApi": ">=2026.3.24-beta.2"
+  },
+  "build": {
+    "openclawVersion": "2026.3.24-beta.2"
+  },
+  "environment": {
+    "PREDICTALOT_URL": {
+      "required": true,
+      "description": "Base URL of your running predictalot server, e.g. http://localhost:8080 (the bridge appends /mcp)."
+    },
+    "PREDICTALOT_AUTH_TOKENS": {
+      "required": false,
+      "description": "Bearer token, only if the predictalot server was started with PREDICTALOT_AUTH_TOKENS set."
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "required": ["url"],
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "Base URL of your running predictalot server, e.g. http://localhost:8080 (the bridge appends /mcp)."
+      },
+      "authToken": {
+        "type": "string",
+        "description": "Bearer token, only if the predictalot server was started with PREDICTALOT_AUTH_TOKENS set."
+      }
+    }
+  }
+}

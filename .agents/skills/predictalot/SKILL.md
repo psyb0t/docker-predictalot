@@ -18,6 +18,12 @@ Self-hosted forecasting service — one HTTP container, two model families.
 
 For installation, configuration, and container setup, see [references/setup.md](references/setup.md).
 
+## Security & safety
+
+- **Network-exposed** — predictalot is a plain HTTP + MCP service; anyone who can reach the port can call it. Set `PREDICTALOT_AUTH_TOKENS` to a strong generated secret (`$(openssl rand -hex 32)`) and bind to loopback (`-p 127.0.0.1:8080:8080`) by default. Only expose beyond loopback behind a reverse proxy / VPN, and never with the default/example token.
+- **Consumer-only** — this skill talks to an instance you already run and trusts. It never provisions, starts, or hardens the server; that's the operator's job (see setup.md).
+- **Destructive delete requires confirmation** — `DELETE /v1/tabular/models/{modelId}` permanently removes a trained model and cannot be undone. Only call it against a `modelId` you obtained from a prior `GET /v1/tabular/models` (or a train response) in this session, and get explicit user confirmation before issuing the delete.
+
 ## When To Use
 
 - Forecast a numeric time series N steps ahead and get calibrated quantile bands (`0.1`/`0.5`/`0.9`, etc.) — zero-shot, no training.
@@ -397,9 +403,9 @@ Weighted combination of several stored models on the same features; all members 
 
 **Response** (`EnsembleForecastResponse`): `mode`, `horizon`, `ensembleMembers`, normalized `weights`, `individual` (`{modelId: member response}`), plus the combined mode-specific fields (`probUp`+`confidence` / `predicted` / `median`+`quantiles`).
 
-### `GET /v1/tabular/models` and `DELETE /v1/tabular/models/{modelId}`
+### `GET /v1/tabular/models` and `DELETE /v1/tabular/models/{modelId}` (destructive)
 
-`GET` lists stored models: `{"models": [{ modelId, backend, mode, horizon, nFeatures, featureNames, nTrainingRows, trainedAtUnix }]}`. `DELETE` removes one (`{"modelId": "...", "removed": true}`; 404 if absent).
+`GET` lists stored models: `{"models": [{ modelId, backend, mode, horizon, nFeatures, featureNames, nTrainingRows, trainedAtUnix }]}`. `DELETE` removes one (`{"modelId": "...", "removed": true}`; 404 if absent) — **irreversible**. Only delete a `modelId` returned by a prior `GET /v1/tabular/models` call (or a train response), and get explicit user confirmation first.
 
 ### Meta-learners
 

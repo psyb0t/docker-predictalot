@@ -8,6 +8,13 @@ Consumer-facing reference for running / pointing at a predictalot instance. This
 - Optional: NVIDIA GPU + NVIDIA Container Toolkit for the CUDA image (CPU works for all five FMs; `chronos-2` is the fastest on CPU)
 - Disk for model snapshots under `/models` (per-slug sizes ≈ chronos-2 ~120 MB, timesfm-2.5 ~200 MB, moirai-2 ~50 MB, toto-1 ~580 MB, sundial-base-128m ~490 MB) plus trained tabular models under `/models/tabular/<id>/`
 
+## Security & safety
+
+predictalot is a plain HTTP + MCP service — anyone who can reach the port can call it. Before any non-local / shared deployment:
+
+- Set `PREDICTALOT_AUTH_TOKENS` to a strong generated secret, e.g. `$(openssl rand -hex 32)` — never leave it at a placeholder/default value.
+- Bind to loopback by default (`-p 127.0.0.1:8080:8080`); only expose beyond loopback behind a reverse proxy / VPN (see "Public Access via Reverse Proxy" below).
+
 ## Quick Install
 
 ### CPU
@@ -15,8 +22,8 @@ Consumer-facing reference for running / pointing at a predictalot instance. This
 ```bash
 docker run -d --name predictalot \
   -v $HOME/predictalot-models:/models \
-  -e PREDICTALOT_AUTH_TOKENS=changeme \
-  -p 8080:8080 \
+  -e PREDICTALOT_AUTH_TOKENS=$(openssl rand -hex 32) \
+  -p 127.0.0.1:8080:8080 \
   psyb0t/predictalot:latest
 ```
 
@@ -41,14 +48,16 @@ services:
   predictalot:
     image: psyb0t/predictalot:latest
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
-      PREDICTALOT_AUTH_TOKENS: changeme
+      PREDICTALOT_AUTH_TOKENS: "${PREDICTALOT_AUTH_TOKENS:?set to a generated secret, e.g. openssl rand -hex 32}"
       PREDICTALOT_PRELOAD: chronos-2,toto-1
     volumes:
       - ./predictalot-models:/models
     restart: unless-stopped
 ```
+
+Generate the token once and export it before `docker compose up` (e.g. `export PREDICTALOT_AUTH_TOKENS=$(openssl rand -hex 32)`) — never commit a real token or ship the example value as-is. The token MUST be changed before any non-local/shared deployment.
 
 **Verify:** `curl http://localhost:8080/healthz` returns `{"ok": true}` once boot is done.
 

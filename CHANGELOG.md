@@ -5,6 +5,13 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.1.0 — 2026-07-25
+
+ClawHub plugin + skill security pass. No REST API or service change.
+
+- **New `@psyb0t/predictalot` code plugin** (`.agents/plugins/predictalot/`) — a stdio↔HTTP MCP bridge (`mcp-remote`) to the box's `/mcp` endpoint. MIT-licensed. CI publishes it alongside the skill via `clawhub-publish.yml`.
+- **Skill hardening**: added a Security & safety section, marked `DELETE /v1/tabular/models/{modelId}` as destructive/irreversible with an explicit-confirmation rule, and replaced the weak example credential (`changeme`) with a generated-secret + loopback-by-default install pattern in `references/setup.md`.
+
 ## v1.0.1 — 2026-06-14
 
 Docs-only patch release. No code, no API behavior, no dependency, no image
