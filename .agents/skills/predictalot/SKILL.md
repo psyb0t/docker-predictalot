@@ -5,6 +5,9 @@ homepage: https://github.com/psyb0t/docker-predictalot
 user-invocable: true
 metadata:
   { "openclaw": { "emoji": "🔮", "primaryEnv": "PREDICTALOT_URL", "requires": { "bins": ["docker", "curl"] } } }
+permissions:
+  network: "outbound HTTP(S) to the configured PREDICTALOT_URL only (forecast/train/model-management calls + MCP at /mcp)"
+  shell: "docker + curl invocations shown in setup.md and this file (container lifecycle, request examples) — no other host access"
 ---
 
 # predictalot
@@ -103,6 +106,8 @@ Tabular backends (all support `direction` / `value` / `quantile`):
 
 ## Quick Start
 
+> Every forecast/train call below sends your time series, engineered features, and/or `modelId`s over the network to `$PREDICTALOT_URL`. Only point this at a trusted, self-hosted instance you control, prefer HTTPS, treat proprietary datasets as sensitive, and never echo `PREDICTALOT_AUTH_TOKEN` in output.
+
 ```bash
 # Health (unauthenticated).
 curl -s $PREDICTALOT_URL/healthz | jq
@@ -130,7 +135,7 @@ Shapes recur across the timeseries API: `context` is `[series][time]` (a batch o
 
 ## API — `POST /v1/timeseries/univariate/forecast`
 
-Single-model quantile forecast over a batch of independent series.
+Single-model quantile forecast over a batch of independent series. `context` (your time series data) transmits off-box to `$PREDICTALOT_URL` — same data-transfer note as Quick Start applies to every timeseries endpoint below.
 
 ### Request Fields
 
@@ -358,7 +363,7 @@ List the supervised tabular backends and the modes each supports. Use this to di
 
 ## Tabular API (train → forecast)
 
-The tabular side trains on YOUR engineered features and persists a model server-side by `modelId`. `target` / `features` are generic float lists — no OHLC / indicator assumptions. `features` is per series: `featureName → time-aligned float list`.
+The tabular side trains on YOUR engineered features and persists a model server-side by `modelId`. `target` / `features` are generic float lists — no OHLC / indicator assumptions. `features` is per series: `featureName → time-aligned float list`. Same data-transfer note as Quick Start applies: `target`/`features`/`modelId` all transmit to `$PREDICTALOT_URL`.
 
 ### `POST /v1/tabular/train`
 

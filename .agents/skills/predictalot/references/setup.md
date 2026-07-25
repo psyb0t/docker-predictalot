@@ -35,7 +35,7 @@ docker run -d --name predictalot --gpus all \
   -e PREDICTALOT_AUTH_TOKENS=$(openssl rand -hex 32) \
   -e PREDICTALOT_DEVICE=cuda \
   -e PREDICTALOT_PRELOAD=chronos-2,toto-1,sundial-base-128m \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
   psyb0t/predictalot:latest-cuda
 ```
 

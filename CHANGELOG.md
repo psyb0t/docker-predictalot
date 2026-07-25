@@ -5,6 +5,14 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.1.1 — 2026-07-25
+
+Skill security hardening for the ClawHub SkillSpector scan. Docs only, no API change.
+
+- Declared a `permissions:` block (network to the configured `PREDICTALOT_URL`, shell) in the skill frontmatter.
+- Data-transfer warnings on the forecast/tabular calls — they transmit your series / features / model IDs to `PREDICTALOT_URL`, so point it at a trusted self-hosted instance, prefer HTTPS, and never echo the bearer.
+- Loopback bind (`-p 127.0.0.1:8080:8080`) in the CUDA quick-install example to match the CPU one.
+
 ## v1.1.0 — 2026-07-25
 
 ClawHub plugin + skill security pass. No REST API or service change.
