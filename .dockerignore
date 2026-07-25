@@ -4,6 +4,9 @@
 .gitignore
 .gitattributes
 
+# Agent skill dir (published to ClawHub, not needed in the image)
+.agents/
+
 # Secrets — defensive (mirrors .gitignore — never let secrets into the build context)
 .env
 .env.*
