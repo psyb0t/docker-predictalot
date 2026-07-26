@@ -24,6 +24,7 @@ For installation, configuration, and container setup, see [references/setup.md](
 ## Security & safety
 
 - **Network-exposed** — predictalot is a plain HTTP + MCP service; anyone who can reach the port can call it. Set `PREDICTALOT_AUTH_TOKENS` to a strong generated secret (`$(openssl rand -hex 32)`) and bind to loopback (`-p 127.0.0.1:8080:8080`) by default. Only expose beyond loopback behind a reverse proxy / VPN, and never with the default/example token.
+- **External transmission** — every forecast/train call sends your time series, engineered feature values, and/or `modelId`s to whatever `PREDICTALOT_URL` points at — that data leaves your host. Point it only at a service you run or explicitly trust; prefer HTTPS.
 - **Consumer-only** — this skill talks to an instance you already run and trusts. It never provisions, starts, or hardens the server; that's the operator's job (see setup.md).
 - **Destructive delete requires confirmation** — `DELETE /v1/tabular/models/{modelId}` permanently removes a trained model and cannot be undone. Only call it against a `modelId` you obtained from a prior `GET /v1/tabular/models` (or a train response) in this session, and get explicit user confirmation before issuing the delete.
 

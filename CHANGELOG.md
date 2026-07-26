@@ -5,6 +5,17 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.1.2 — 2026-07-26
+
+Skill security-documentation hardening. Docs only, no behavior change.
+
+- Added an explicit "External transmission" bullet to the skill's Security
+  & safety section: forecast/train calls send your time series, feature
+  values, and/or `modelId`s to whatever `PREDICTALOT_URL` points at, so
+  that data leaves your host — point it only at a service you run or trust,
+  prefer HTTPS. The data-transfer notes already inline throughout the
+  skill are now also summarized in one place up top.
+
 ## v1.1.1 — 2026-07-25
 
 Skill security hardening for the ClawHub SkillSpector scan. Docs only, no API change.
