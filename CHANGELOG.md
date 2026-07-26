@@ -5,6 +5,12 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.1.3 — 2026-07-26
+
+License-note correction. Documentation only, no behavior change.
+
+- Corrected the README license line: the project's code is WTFPL (see `LICENSE`); the MCP plugin under `.agents/plugins/predictalot/` is MIT.
+
 ## v1.1.2 — 2026-07-26
 
 Skill security-documentation hardening. Docs only, no behavior change.

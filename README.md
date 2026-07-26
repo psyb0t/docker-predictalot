@@ -49,5 +49,5 @@ curl -s http://localhost:8080/v1/tabular/forecast \
 
 ## License
 
-Code: MIT (see `LICENSE`).
+Code: WTFPL (see `LICENSE`). The MCP plugin under `.agents/plugins/predictalot/` is MIT (its own LICENSE).
 Foundation models retain their upstream licenses — chronos-2 / timesfm-2.5 / toto-1 / sundial-base-128m: Apache 2.0; moirai-2: CC-BY-NC-4.0 (non-commercial). Tabular backends use their upstream licenses — lightgbm / xgboost / scikit-learn: permissive. Review each before commercial use.
