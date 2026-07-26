@@ -5,6 +5,12 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.1.4 — 2026-07-26
+
+Listed on the official MCP Registry — no behavior change.
+
+- Added `server.json` — published to the official Model Context Protocol Registry (`registry.modelcontextprotocol.io`) as `io.github.psyb0t/predictalot`, pointing at the `psyb0t/predictalot` Docker image. Ownership is proven by an `io.modelcontextprotocol.server.name` LABEL on the image; publishing runs on tag pushes via GitHub OIDC (secretless). Also added a `glama.json` maintainer claim.
+
 ## v1.1.3 — 2026-07-26
 
 License-note correction. Documentation only, no behavior change.
