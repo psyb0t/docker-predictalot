@@ -5,6 +5,13 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.1.7 — 2026-07-27
+
+Agent-integration manifests. Docs only, no behavior change.
+
+- Added `.agents/.codex-plugin/plugin.json` and `.agents/.claude-plugin/plugin.json` — metadata-only manifests that make the existing `.agents/skills/predictalot` skill installable natively from Claude Code and Codex via the shared `psyb0t/agents` marketplace.
+- Added a `## Agent integrations` README section with copy-pasteable install commands for Claude Code, Codex, and OpenClaw (including the `@psyb0t/predictalot` MCP-bridge plugin).
+
 ## v1.1.6 — 2026-07-27
 
 README badges. Docs/CI only, no behavior change.

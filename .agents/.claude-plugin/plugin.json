@@ -1,0 +1,22 @@
+{
+  "name": "predictalot",
+  "description": "Self-hosted forecasting service — zero-shot time-series forecasting (chronos-2, timesfm-2.5, moirai-2, toto-1, sundial-base-128m) across univariate, multivariate, covariate, and sample-path types, plus supervised tabular ML (9 backends, 3 meta-learners) with train+persist and weighted ensembles. Unified REST + MCP (Streamable-HTTP at /mcp).",
+  "author": { "name": "psyb0t", "url": "https://github.com/psyb0t" },
+  "homepage": "https://github.com/psyb0t/docker-predictalot",
+  "license": "WTFPL",
+  "keywords": ["forecasting", "time-series", "tabular-ml", "quantile-forecasting", "mcp", "ensemble", "self-hosted", "rest-api"],
+  "userConfig": {
+    "url": {
+      "type": "string",
+      "title": "predictalot URL",
+      "description": "Base URL of your running predictalot server, e.g. http://localhost:8080 (PREDICTALOT_URL).",
+      "required": true
+    },
+    "auth_token": {
+      "type": "string",
+      "title": "predictalot auth token",
+      "description": "Bearer token. Only needed if the server was started with PREDICTALOT_AUTH_TOKENS set.",
+      "sensitive": true
+    }
+  }
+}

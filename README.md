@@ -52,6 +52,47 @@ curl -s http://localhost:8080/v1/tabular/forecast \
 
 [CHANGELOG.md](CHANGELOG.md) tracks per-version changes.
 
+## Agent integrations
+
+The [skill](.agents/skills/predictalot) works in any agent that reads `.agents/skills/`, and
+installs natively in the clients below.
+
+### Claude Code
+
+```bash
+claude plugin marketplace add psyb0t/agents
+claude plugin install predictalot@psyb0t
+```
+
+Claude Code prompts for the predictalot URL and, if auth is enabled, the token — the token is
+stored in your OS keychain.
+
+### Codex
+
+```bash
+codex plugin marketplace add psyb0t/agents
+```
+
+Codex also picks the skill up automatically in any repo containing `.agents/skills/`, and
+invokes it as `$predictalot`.
+
+### OpenClaw
+
+The skill is published to ClawHub on every release:
+
+```bash
+openclaw skills install @psyb0t/predictalot
+```
+
+For MCP clients that speak local stdio, the [`@psyb0t/predictalot`](.agents/plugins/predictalot)
+plugin bridges to predictalot's `/mcp` endpoint:
+
+```bash
+openclaw plugins install clawhub:@psyb0t/predictalot
+```
+
+Then set `PREDICTALOT_URL` (and `PREDICTALOT_AUTH_TOKENS` if the server requires one).
+
 ## License
 
 Code: WTFPL (see `LICENSE`). The MCP plugin under `.agents/plugins/predictalot/` is MIT (its own LICENSE).
