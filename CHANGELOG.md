@@ -5,6 +5,12 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.1.6 — 2026-07-27
+
+README badges. Docs/CI only, no behavior change.
+
+- Added a GitHub Actions CI status badge to the README.
+
 ## v1.1.5 — 2026-07-27
 
 README badges. Docs/CI only, no behavior change.
