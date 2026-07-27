@@ -1,5 +1,9 @@
 # predictalot
 
+[![version](https://raw.githubusercontent.com/psyb0t/docker-predictalot/badges/version.svg)](https://github.com/psyb0t/docker-predictalot/releases)
+[![license](https://raw.githubusercontent.com/psyb0t/docker-predictalot/badges/license.svg)](LICENSE)
+[![Docker Pulls](https://img.shields.io/docker/pulls/psyb0t/predictalot?style=flat-square)](https://hub.docker.com/r/psyb0t/predictalot)
+
 > One HTTP service, two model families, zero ceremony.
 
 - **Foundation time-series** — 5 zero-shot forecasters (chronos-2, timesfm-2.5, moirai-2, toto-1, sundial-base-128m). Hand them a context window, get quantile or sample-path forecasts. No training step. Six modality-specific endpoints under `/v1/timeseries/<type>/`.

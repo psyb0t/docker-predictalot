@@ -5,6 +5,12 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.1.5 — 2026-07-27
+
+README badges. Docs/CI only, no behavior change.
+
+- Added self-hosted version and license badges plus a Docker Hub pulls badge; wired a badges job into pipeline.yml.
+
 ## v1.1.4 — 2026-07-26
 
 Listed on the official MCP Registry — no behavior change.
