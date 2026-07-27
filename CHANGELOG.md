@@ -5,6 +5,13 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.1.8 — 2026-07-27
+
+README fix. Docs only, no behavior change.
+
+- The Codex subsection of `## Agent integrations` was missing its install command. Added `codex plugin add predictalot@psyb0t` right after the marketplace-add step.
+- Clarified that the skill's invocation form depends on how it was picked up: installed via the marketplace it invokes as `$predictalot:predictalot`; picked up automatically from a repo's own `.agents/skills/` (no install needed) it invokes as plain `$predictalot`.
+
 ## v1.1.7 — 2026-07-27
 
 Agent-integration manifests. Docs only, no behavior change.

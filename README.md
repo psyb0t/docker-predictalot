@@ -71,10 +71,12 @@ stored in your OS keychain.
 
 ```bash
 codex plugin marketplace add psyb0t/agents
+codex plugin add predictalot@psyb0t
 ```
 
-Codex also picks the skill up automatically in any repo containing `.agents/skills/`, and
-invokes it as `$predictalot`.
+Installed via the marketplace, the skill invokes as `$predictalot:predictalot`. Codex also picks
+the skill up automatically, with no install, in any repo containing `.agents/skills/` — there it
+invokes as plain `$predictalot`.
 
 ### OpenClaw
 
