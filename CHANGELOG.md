@@ -5,6 +5,16 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.1.9 — 2026-08-01
+
+CI plumbing only. No code in this repo changed — every commit in this release touches `.github/workflows/`.
+
+- The pipeline was split: building and publishing stay in `pipeline.yml`, and everything that leaves the host now lives beside it in `mirror-and-archive.yml`.
+- The repo is mirrored to Codeberg as well as GitLab.
+- It is archived to the Wayback Machine, Software Heritage and archive.org.
+- Issues opened on either mirror are copied back to GitHub every six hours, and closed here when the original closes.
+- Pull requests are switched off on the mirrors — they are force-pushed from GitHub, so anything merged there would be destroyed by the next sync. Issues and forking stay enabled.
+
 ## v1.1.8 — 2026-07-27
 
 README fix. Docs only, no behavior change.
