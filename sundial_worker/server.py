@@ -7,6 +7,7 @@ a unix socket (default `/tmp/predictalot/sundial.sock`) using plain HTTP.
 
 Endpoints:
     GET  /healthz
+    POST /unload     — release model weights and Torch caches
     POST /forecast   — quantile output (univariate type)
     POST /samples    — raw sample paths (samples type)
 """
@@ -14,6 +15,7 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -25,6 +27,7 @@ from pydantic import BaseModel, Field
 
 SLUG = "sundial-base-128m"
 HF_REPO_ID = "thuml/sundial-base-128m"
+_UNLOADED_STATUS = "unloaded"
 
 log = logging.getLogger("sundial_worker")
 
@@ -122,6 +125,32 @@ app = FastAPI(title="sundial_worker", lifespan=_lifespan)
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
     return {"ok": True, "model": SLUG, "loaded": _model is not None}
+
+
+def _release_torch_runtime() -> None:
+    gc.collect()
+    compiler = getattr(torch, "compiler", None)
+    compiler_reset = getattr(compiler, "reset", None)
+    if callable(compiler_reset):
+        compiler_reset()
+    if not torch.cuda.is_available():
+        return
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+
+
+@app.post("/unload")
+async def unload() -> dict[str, Any]:
+    """Drop Sundial weights and release Torch-owned caches in this worker."""
+    global _model
+    async with _lock:
+        was_loaded = _model is not None
+        _model = None
+    if was_loaded:
+        await asyncio.to_thread(_release_torch_runtime)
+        log.info("unloaded sundial model")
+    return {"status": _UNLOADED_STATUS, "wasLoaded": was_loaded}
 
 
 def _validate_context(context: list[list[float]]) -> None:

@@ -65,6 +65,7 @@ async def get_model() -> Any:
         log.info("loading toto-1 from %s", path)
         _model, _forecaster = await asyncio.to_thread(_load_sync, str(path))
         log.info("toto-1 loaded")
+        _bump_last_used()
         return _model
 
 
@@ -260,9 +261,7 @@ def _predict_multivariate_sync(
         # result.median: [1, V, H], result.quantile(q): [1, V, H]
         all_medians.append(result.median[0].detach().cpu().tolist())  # [V, H]
         for q in quantile_levels:
-            out_quantiles[_qkey(q)].append(
-                result.quantile(q)[0].detach().cpu().tolist()
-            )
+            out_quantiles[_qkey(q)].append(result.quantile(q)[0].detach().cpu().tolist())
 
     return {
         "model": SLUG,

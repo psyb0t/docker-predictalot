@@ -1,4 +1,4 @@
-"""POST /v1/timeseries/covariates/future/{forecast,forecast/ensemble} + GET /v1/timeseries/covariates/future/models."""
+"""Routes for forecasts with future covariates."""
 
 from __future__ import annotations
 

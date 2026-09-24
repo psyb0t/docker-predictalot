@@ -8,6 +8,7 @@
 > One HTTP service, two model families, zero ceremony.
 
 - **Foundation time-series** — 5 zero-shot forecasters (chronos-2, timesfm-2.5, moirai-2, toto-1, sundial-base-128m). Hand them a context window, get quantile or sample-path forecasts. No training step. Six modality-specific endpoints under `/v1/timeseries/<type>/`.
+- **Model lifecycle** — `POST /v1/models/unload` releases all resident foundation-model weights and runtime caches. A forecast body with `"unload": true` schedules its model for teardown after concurrent forecasts using that model finish.
 - **Tabular ML** — 9 supervised learners (lightgbm, xgboost, hist-gbt, random-forest, logistic, mlp, svm-rbf, knn, naive-bayes) + 3 meta-learners (calibrated, stacking, diversified). Train on YOUR engineered features, persist server-side by `modelId`, forecast on the latest snapshot. Under `/v1/tabular/`.
 - **MCP** — streamable-HTTP tools at `/mcp`. One named tool per (FM type, model) cell plus per-type ensemble + listing. Tabular endpoints are HTTP-only for now.
 
@@ -36,6 +37,10 @@ curl -s http://localhost:8080/v1/tabular/train \
 curl -s http://localhost:8080/v1/tabular/forecast \
   -H "Authorization: Bearer changeme" -H "Content-Type: application/json" \
   -d '{"modelId":"my-model","features":[{"rsi":[58],"macd":[0.4]}]}' | jq
+
+# Release all resident foundation-model memory when it is no longer needed
+curl -s -X POST http://localhost:8080/v1/models/unload \
+  -H "Authorization: Bearer changeme" | jq
 ```
 
 ## Documentation

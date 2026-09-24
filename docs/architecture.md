@@ -23,7 +23,7 @@ The fifth — `sundial-base-128m` — runs in its **own venv at `/opt/sundial-ve
 ```
 
 - The main service makes HTTP-over-UDS calls (`httpx.AsyncHTTPTransport(uds=...)`) to the sundial worker. From the main service's `models/sundial.py` it looks like any other backend (`get_model` waits for `/healthz`, `predict` POSTs to `/forecast`).
-- The sundial worker is its own tiny FastAPI app (`sundial_worker/server.py`) — loads the model lazily, serves `/forecast`, exposes `/healthz`.
+- The sundial worker is its own tiny FastAPI app (`sundial_worker/server.py`) — loads the model lazily, serves `/forecast`, exposes `/healthz`, and handles the bridge's internal `/unload` request by dropping its own weights and Torch caches.
 - The container's entrypoint starts the sundial worker as a background process with an auto-restart loop. If the worker crashes (OOM, ImportError, whatever) the loop relaunches it within ~2 seconds; mid-restart requests get 503 until it's back.
 
 **This pattern is reusable.** Any future model with version conflicts that can't be shimmed drops in the same way: create `/opt/<name>-venv` with its own deps, write `<name>_worker/server.py`, add a thin `models/<name>.py` in the main service that talks to it via httpx-over-UDS, register in the entrypoint's restart loop.
@@ -60,6 +60,12 @@ Tabular backends are **lazy-imported** at first `/v1/tabular/forecast` (or `/tra
 | CUDA | `psyb0t/predictalot:latest-cuda` | amd64 only | PyTorch CUDA 12.4 wheels on CUDA 12.6 runtime base. Needs `--gpus all` + NVIDIA driver on host. CUDA on arm64 is a different stack (Jetson L4T / SBSA) and not on the menu. |
 
 Both images are self-sufficient — same source, same API, same env vars. Pick the one that matches your host. The CUDA image also runs on CPU if `--gpus` isn't passed (useful for debugging).
+
+## Foundation-model teardown
+
+The main service owns the lifecycle lock for every foundation model. Explicit unload and idle cleanup only claim models with no active forecast. A per-request `unload: true` waits for every concurrent forecast using that same model before it tears down. Global Torch cleanup runs only after every foundation forecast is idle, so one model's teardown cannot disrupt another model's live request.
+
+Dropping model memory means clearing model and wrapper references, running Python garbage collection, resetting Torch compiler caches, and releasing CUDA cache and IPC allocations. Python cannot safely unload the loaded Torch native extension from a live process. That extension contains runtime code, not retained model weights.
 
 ## Multi-stage build
 

@@ -5,8 +5,8 @@ removed in 4.42+, so it lives in its own venv (`/opt/sundial-venv`) and runs
 as a tiny FastAPI worker on a unix socket. From the predictalot API's
 perspective sundial looks identical to chronos/timesfm/moirai/toto.
 
-Supported types: univariate, samples. Sundial is univariate-only at the
-model level (see `.research_files/sundial-modes.md` §5).
+Supported types: univariate, samples. Sundial accepts a single channel per
+series.
 """
 
 from __future__ import annotations
@@ -32,12 +32,10 @@ SUPPORTED_TYPES: frozenset[str] = frozenset(
 
 log = logging.getLogger(f"predictalot.models.{SLUG}")
 
-SUNDIAL_SOCK = os.environ.get(
-    "PREDICTALOT_SUNDIAL_SOCK", "/tmp/predictalot/sundial.sock"
-)
-WORKER_READY_TIMEOUT = float(
-    os.environ.get("PREDICTALOT_SUNDIAL_READY_TIMEOUT", "60.0")
-)
+SUNDIAL_SOCK = os.environ.get("PREDICTALOT_SUNDIAL_SOCK", "/tmp/predictalot/sundial.sock")
+WORKER_READY_TIMEOUT = float(os.environ.get("PREDICTALOT_SUNDIAL_READY_TIMEOUT", "60.0"))
+_HTTP_OK = 200
+_UNLOAD_PATH = "/unload"
 
 _lock = asyncio.Lock()
 _client: httpx.AsyncClient | None = None
@@ -64,9 +62,7 @@ def _get_or_create_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
         transport = httpx.AsyncHTTPTransport(uds=SUNDIAL_SOCK)
-        _client = httpx.AsyncClient(
-            transport=transport, base_url="http://sundial", timeout=600.0
-        )
+        _client = httpx.AsyncClient(transport=transport, base_url="http://sundial", timeout=600.0)
     return _client
 
 
@@ -99,6 +95,7 @@ async def get_model() -> Any:
         log.info("waiting for sundial worker on %s", SUNDIAL_SOCK)
         await _wait_for_worker()
         _loaded = True
+        _bump_last_used()
         log.info("sundial worker reachable")
         return _get_or_create_client()
 
@@ -108,7 +105,17 @@ async def unload() -> None:
     async with _lock:
         if not _loaded:
             return
-        log.info("marking sundial unloaded (worker process untouched)")
+        client = _get_or_create_client()
+        try:
+            response = await client.post(_UNLOAD_PATH)
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"sundial worker request to {_UNLOAD_PATH} failed") from exc
+        if response.status_code != _HTTP_OK:
+            raise RuntimeError(
+                f"sundial worker {_UNLOAD_PATH} returned {response.status_code}: "
+                f"{response.text[:200]}"
+            )
+        log.info("unloaded sundial worker model")
         _loaded = False
         _last_used = None
 
@@ -162,9 +169,7 @@ async def _post_json(client: httpx.AsyncClient, path: str, body: dict[str, Any])
         r = await client.post(path, json=body)
     except httpx.HTTPError as exc:
         raise RuntimeError(f"sundial worker request to {path} failed: {exc}") from exc
-    if r.status_code != 200:
-        raise RuntimeError(
-            f"sundial worker {path} returned {r.status_code}: {r.text[:200]}"
-        )
+    if r.status_code != _HTTP_OK:
+        raise RuntimeError(f"sundial worker {path} returned {r.status_code}: {r.text[:200]}")
     _bump_last_used()
     return r.json()

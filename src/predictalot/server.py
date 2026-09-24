@@ -7,12 +7,12 @@ Lifespan:
 
 Endpoints:
   GET  /healthz
-  POST /v1/timeseries/univariate/{forecast,forecast/ensemble} + GET /v1/timeseries/univariate/models
-  POST /v1/timeseries/multivariate/{forecast,forecast/ensemble} + GET /v1/timeseries/multivariate/models
-  POST /v1/timeseries/covariates/past/{forecast,forecast/ensemble} + GET /v1/timeseries/covariates/past/models
-  POST /v1/timeseries/covariates/future/{forecast,forecast/ensemble} + GET /v1/timeseries/covariates/future/models
-  POST /v1/timeseries/covariates/{forecast,forecast/ensemble} + GET /v1/timeseries/covariates/models
-  POST /v1/timeseries/samples/{forecast,forecast/ensemble} + GET /v1/timeseries/samples/models
+  /v1/timeseries/univariate
+  /v1/timeseries/multivariate
+  /v1/timeseries/covariates/past
+  /v1/timeseries/covariates/future
+  /v1/timeseries/covariates
+  /v1/timeseries/samples
   POST /mcp/* (streamable-http, via MCPWithAuth)
 """
 
@@ -25,18 +25,22 @@ from typing import Any, MutableMapping
 
 from fastapi import FastAPI
 
-from . import config, fetch as fetch_module, models
+from . import config
+from . import fetch as fetch_module
+from . import models
 from .auth import check_open_auth_allowed
 from .logging import configure as configure_logging
+from .model_lifecycle import model_lifecycle
 from .routers.covariates import router as covariates_router
 from .routers.covariates_future import router as covariates_future_router
 from .routers.covariates_past import router as covariates_past_router
 from .routers.meta import router as meta_router
+from .routers.models import router as models_router
 from .routers.multivariate import router as multivariate_router
 from .routers.samples import router as samples_router
-from .routers.univariate import router as univariate_router
 from .routers.tabular import router as tabular_router
 from .routers.tabular_meta import router as tabular_meta_router
+from .routers.univariate import router as univariate_router
 
 log = logging.getLogger("predictalot.server")
 
@@ -125,9 +129,7 @@ class BodySizeLimitMiddleware:
         await self._app(scope, _capped_receive, _capped_send)
 
     async def _send_413(self, send: Any) -> None:
-        body = (
-            f'{{"detail":"request body too large; max {self._max} bytes"}}'
-        ).encode()
+        body = (f'{{"detail":"request body too large; max {self._max} bytes"}}').encode()
         await send(
             {
                 "type": "http.response.start",
@@ -185,23 +187,12 @@ async def _idle_sweeper() -> None:
     while True:
         try:
             await asyncio.sleep(SWEEPER_INTERVAL_SECONDS)
-            for slug in config.MODEL_SLUGS:
-                backend = models.get(slug)
-                if not backend.loaded():
-                    continue
-                timeout = config.idle_timeout_for(slug)
-                if timeout <= 0:
-                    continue
-                last = backend.last_used_secs_ago()
-                if last is None:
-                    continue
-                if last < timeout:
-                    continue
-                log.info("idle sweeper: unloading %s (idle %.1fs >= %.1fs)", slug, last, timeout)
-                try:
-                    await backend.unload()
-                except Exception:  # noqa: BLE001
-                    log.exception("idle sweeper: unload %s failed", slug)
+            unloaded = await model_lifecycle.unload_idle_models()
+            if unloaded:
+                log.info(
+                    "idle sweeper unloaded foundation models",
+                    extra={"models": [result.slug for result in unloaded]},
+                )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -221,6 +212,7 @@ app = FastAPI(
 )
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=config.MAX_BODY_SIZE)
 app.include_router(meta_router)
+app.include_router(models_router)
 app.include_router(univariate_router)
 app.include_router(multivariate_router)
 app.include_router(covariates_past_router)

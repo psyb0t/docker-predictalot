@@ -63,6 +63,7 @@ async def get_model() -> Any:
         log.info("loading chronos-2 from %s", path)
         _model = await asyncio.to_thread(_load_model_sync, str(path))
         log.info("chronos-2 loaded")
+        _bump_last_used()
         return _model
 
 

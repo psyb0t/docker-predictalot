@@ -23,7 +23,8 @@ named tool per (forecast type, model) cell across 5 zero-shot forecasters
 a per-type weighted ensemble tool and a per-type model-listing tool. Forecast
 types: `univariate`, `multivariate`, `covariates_past`, `covariates_future`,
 `covariates_both`, `samples`. Tabular ML (train/forecast on your own
-engineered features) is HTTP-only and not exposed over MCP.
+engineered features) is HTTP-only and not exposed over MCP. The `unload_models`
+tool releases every resident foundation model when no foundation forecast is active.
 
 ## Configuration
 

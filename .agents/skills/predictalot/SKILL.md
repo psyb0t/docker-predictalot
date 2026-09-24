@@ -17,6 +17,7 @@ Self-hosted forecasting service — one HTTP container, two model families.
 - **Foundation time-series (zero-shot)** — 5 forecasters (`chronos-2`, `timesfm-2.5`, `moirai-2`, `toto-1`, `sundial-base-128m`). Hand them a context window, get quantile bands or raw sample paths. No training step. Routed by forecast type under `/v1/timeseries/<type>/` — `univariate`, `covariates/past`, `covariates/future`, `covariates` (past+future), `multivariate`, `samples`. Each type has `forecast`, `forecast/ensemble`, and a `models` listing.
 - **Tabular ML (supervised)** — 9 learners (`lightgbm`, `xgboost`, `hist-gbt`, `random-forest`, `logistic`, `mlp`, `svm-rbf`, `knn`, `naive-bayes`), all supporting 3 modes (`direction` / `value` / `quantile`). Train on YOUR engineered features, persist server-side by `modelId`, forecast on the latest feature snapshot. Weighted ensembles over stored models plus 3 meta-learners (`calibrated` / `stacking` / `diversified`). Under `/v1/tabular/`.
 - **MCP** — streamable-HTTP tools at `/mcp`. One tool per (FM type, model) cell plus per-type ensemble + listing. Tabular is HTTP-only.
+- **Model lifecycle** — `POST /v1/models/unload` releases every resident foundation model. A forecast's `unload: true` waits for concurrent forecasts using that model, then tears it down. The MCP equivalent is `unload_models`.
 - **Auth** — optional bearer token (`PREDICTALOT_AUTH_TOKENS` on the server; refuses to start with no tokens unless `PREDICTALOT_ALLOW_NO_AUTH=1`).
 
 For installation, configuration, and container setup, see [references/setup.md](references/setup.md).
@@ -131,6 +132,15 @@ curl -s $PREDICTALOT_URL/v1/timeseries/univariate/forecast \
 Wire format is **camelCase** (`quantileLevels`, `contextLength`, `pastCovariates`, `futureCovariates`, `numSamples`, `memberOverrides`, `modelId`). All `/v1/*` routes require the bearer header when the server has tokens configured; drop the header for an open-auth deployment.
 
 Shapes recur across the timeseries API: `context` is `[series][time]` (a batch of independent series), `horizon` > 0, `quantileLevels` is a subset of `{0.1, 0.2, …, 0.9}` (default `[0.1, 0.5, 0.9]`), `contextLength` caps history fed to the model (omit → per-model default), `unload: true` tears the model down after the response. `median` and `quantiles["0.5"]` are the same for most models but can differ for chronos-2 (its `median` is the distribution mean).
+
+Release every resident foundation model when the next task will not need one:
+
+```bash
+curl -s -X POST $PREDICTALOT_URL/v1/models/unload \
+  -H "Authorization: Bearer $PREDICTALOT_AUTH_TOKEN" | jq
+```
+
+The request returns `409` while a foundation forecast is active. Do not retry it blindly. Wait for the forecast result, then retry when memory needs to be freed.
 
 ---
 

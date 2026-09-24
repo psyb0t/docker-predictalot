@@ -62,6 +62,7 @@ async def get_model() -> Any:
         log.info("loading timesfm-2.5 from %s", path)
         _model = await asyncio.to_thread(_load_model_sync, str(path))
         log.info("timesfm-2.5 loaded")
+        _bump_last_used()
         return _model
 
 
@@ -77,9 +78,7 @@ def _load_model_sync(path: str) -> Any:
         model_config = json.load(f)
 
     model = timesfm.TimesFM_2p5_200M_torch(config=model_config, torch_compile=False)
-    model.model.load_checkpoint(
-        str(snapshot / "model.safetensors"), torch_compile=False
-    )
+    model.model.load_checkpoint(str(snapshot / "model.safetensors"), torch_compile=False)
     model.compile(
         ForecastConfig(
             max_context=config.TIMESFM_MAX_CONTEXT,

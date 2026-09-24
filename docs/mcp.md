@@ -7,6 +7,7 @@ Streamable-HTTP MCP server. Same auth as HTTP (bearer header or `?apiToken=...` 
 - `forecast_<type>_<model>` — single-model forecast. Examples: `forecast_univariate_chronos_2`, `forecast_multivariate_moirai_2`, `forecast_samples_toto_1`.
 - `forecast_<type>_ensemble` — per-type weighted ensemble. One per type (6 total).
 - `list_<type>_models` — per-type runtime listing. One per type (6 total).
+- `unload_models` — releases every resident foundation model and its runtime caches. It reports an error if a foundation forecast is active.
 
 Model slug dashes/dots become underscores in the tool name (`sundial-base-128m` → `sundial_base_128m`, `timesfm-2.5` → `timesfm_2_5`).
 

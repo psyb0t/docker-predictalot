@@ -27,6 +27,7 @@ COVARIATES_PAST_URL = "/v1/timeseries/covariates/past/forecast"
 COVARIATES_FUTURE_URL = "/v1/timeseries/covariates/future/forecast"
 COVARIATES_BOTH_URL = "/v1/timeseries/covariates/forecast"
 SAMPLES_URL = "/v1/timeseries/samples/forecast"
+MOIRAI_MULTIVARIATE_NATIVE_MAX_HORIZON = 64
 
 
 def _sane_floats(values: list[float]) -> None:
@@ -181,6 +182,27 @@ class TestMultivariateLive:
         assert len(body["median"][0][0]) == 3
         for ch in body["median"][0]:
             _sane_floats(ch)
+
+    def test_moirai2_rejects_multivariate_horizon_beyond_native_window(
+        self, http_client: httpx.Client
+    ) -> None:
+        context = [
+            [
+                [float(i) for i in range(1, 31)],
+                [float(i * 10) for i in range(1, 31)],
+            ]
+        ]
+        response = http_client.post(
+            MULTIVARIATE_URL,
+            json={
+                "model": "moirai-2",
+                "context": context,
+                "config": {"horizon": MOIRAI_MULTIVARIATE_NATIVE_MAX_HORIZON + 1},
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        assert "native maximum 64" in response.json()["detail"]
 
 
 class TestCovariatesPastLive:

@@ -20,7 +20,7 @@ import asyncio
 import logging
 import math
 import time
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -31,6 +31,7 @@ from .tabular_schemas import (
     EnsembleForecastResponse,
     ForecastRequest,
     ForecastResponse,
+    ModeStr,
     TabularModelInfo,
     TabularModelsResponse,
     TrainRequest,
@@ -461,7 +462,7 @@ def list_models() -> dict[str, Any]:
         TabularModelInfo(
             model_id=m.model_id,
             backend=m.backend,
-            mode=m.mode,
+            mode=cast(ModeStr, m.mode),
             horizon=m.horizon,
             n_features=len(m.feature_names),
             feature_names=m.feature_names,

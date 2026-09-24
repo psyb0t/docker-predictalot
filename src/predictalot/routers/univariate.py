@@ -1,4 +1,4 @@
-"""POST /v1/timeseries/univariate/{forecast,forecast/ensemble} + GET /v1/timeseries/univariate/models."""
+"""Routes for univariate forecasts and model metadata."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from .. import dispatch, models, types
 from ..auth import check_bearer
+from ._common import build_type_models_response
 from .schemas import (
     UnivariateEnsembleRequest,
     UnivariateEnsembleResponse,
     UnivariateRequest,
     UnivariateResponse,
 )
-from ._common import build_type_models_response
 
 log = logging.getLogger("predictalot.routers.univariate")
 

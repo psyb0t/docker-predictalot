@@ -15,9 +15,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from . import config, models, types
+from .model_lifecycle import model_lifecycle
 
 log = logging.getLogger("predictalot.dispatch")
 
@@ -91,8 +93,7 @@ def _validate_covariates_shape(
     """
     if len(covariates) != len(context):
         raise ValueError(
-            f"{label} length ({len(covariates)}) must equal context length "
-            f"({len(context)})"
+            f"{label} length ({len(covariates)}) must equal context length " f"({len(context)})"
         )
     if not covariates:
         return
@@ -126,9 +127,7 @@ def _check_horizon(horizon: int) -> None:
 
 def _check_model_for_type(model: str, type_slug: str) -> None:
     if model not in config.MODEL_SLUGS:
-        raise UnknownModelError(
-            f"unknown model {model!r}; valid: {list(config.MODEL_SLUGS)}"
-        )
+        raise UnknownModelError(f"unknown model {model!r}; valid: {list(config.MODEL_SLUGS)}")
     types.assert_supported(type_slug, model)
 
 
@@ -149,8 +148,7 @@ def _resolve_weights(type_slug: str, weights: dict[str, float] | None) -> dict[s
             wf = float(w)
             if not math.isfinite(wf):
                 raise ValueError(
-                    f"weight for {slug} must be a finite non-negative number, "
-                    f"got {w}"
+                    f"weight for {slug} must be a finite non-negative number, " f"got {w}"
                 )
             if wf < 0:
                 raise ValueError(f"weight for {slug} must be >= 0, got {w}")
@@ -165,13 +163,12 @@ def _resolve_weights(type_slug: str, weights: dict[str, float] | None) -> dict[s
     return {s: w / total for s, w in active}
 
 
-async def _maybe_unload(slug: str, unload_after: bool) -> None:
-    if not unload_after:
-        return
-    try:
-        await models.get(slug).unload()
-    except Exception:  # noqa: BLE001
-        log.exception("unload after request failed for %s", slug)
+async def _run_model_forecast(
+    slug: str,
+    operation: Callable[[], Awaitable[dict[str, Any]]],
+    unload_after: bool,
+) -> dict[str, Any]:
+    return await model_lifecycle.invoke(slug, operation, unload_after=unload_after)
 
 
 # ─── extras + per-member override helpers ───────────────────────────────────
@@ -256,12 +253,16 @@ async def dispatch_univariate(
     q = _resolve_quantiles(quantile_levels)
     ctx = _resolve_ctx_len(model, context_length)
 
-    backend = models.get(model)
-    result = await backend.predict_univariate(
-        context, horizon, q, ctx, extra=_resolve_extra(extra),
-    )
-    await _maybe_unload(model, unload_after)
-    return result
+    async def _forecast() -> dict[str, Any]:
+        return await models.get(model).predict_univariate(
+            context,
+            horizon,
+            q,
+            ctx,
+            extra=_resolve_extra(extra),
+        )
+
+    return await _run_model_forecast(model, _forecast, unload_after)
 
 
 async def ensemble_univariate(
@@ -287,11 +288,17 @@ async def ensemble_univariate(
             global_extra=extra,
             overrides=member_overrides,
         )
-        out = await models.get(slug).predict_univariate(
-            context, horizon, q_eff, ctx, extra=eff_extra,
-        )
-        await _maybe_unload(slug, unload_after)
-        return out
+
+        async def _forecast() -> dict[str, Any]:
+            return await models.get(slug).predict_univariate(
+                context,
+                horizon,
+                q_eff,
+                ctx,
+                extra=eff_extra,
+            )
+
+        return await _run_model_forecast(slug, _forecast, unload_after)
 
     active = list(norm.keys())
     results = await asyncio.gather(*[_one(s) for s in active], return_exceptions=False)
@@ -299,10 +306,7 @@ async def ensemble_univariate(
 
     n_series = len(individual[active[0]]["median"])
     median_avg = [
-        [
-            sum(individual[s]["median"][i][t] * norm[s] for s in active)
-            for t in range(horizon)
-        ]
+        [sum(individual[s]["median"][i][t] * norm[s] for s in active) for t in range(horizon)]
         for i in range(n_series)
     ]
     quantiles_avg: dict[str, list[list[float]]] = {}
@@ -345,10 +349,16 @@ async def dispatch_multivariate(
     q = _resolve_quantiles(quantile_levels)
     ctx = _resolve_ctx_len(model, context_length)
 
-    backend = models.get(model)
-    result = await backend.predict_multivariate(context, horizon, q, ctx, extra=_resolve_extra(extra))
-    await _maybe_unload(model, unload_after)
-    return result
+    async def _forecast() -> dict[str, Any]:
+        return await models.get(model).predict_multivariate(
+            context,
+            horizon,
+            q,
+            ctx,
+            extra=_resolve_extra(extra),
+        )
+
+    return await _run_model_forecast(model, _forecast, unload_after)
 
 
 async def ensemble_multivariate(
@@ -374,9 +384,17 @@ async def ensemble_multivariate(
             global_extra=extra,
             overrides=member_overrides,
         )
-        out = await models.get(slug).predict_multivariate(context, horizon, q_eff, ctx, extra=eff_extra)
-        await _maybe_unload(slug, unload_after)
-        return out
+
+        async def _forecast() -> dict[str, Any]:
+            return await models.get(slug).predict_multivariate(
+                context,
+                horizon,
+                q_eff,
+                ctx,
+                extra=eff_extra,
+            )
+
+        return await _run_model_forecast(slug, _forecast, unload_after)
 
     active = list(norm.keys())
     results = await asyncio.gather(*[_one(s) for s in active], return_exceptions=False)
@@ -439,10 +457,17 @@ async def dispatch_covariates_past(
     q = _resolve_quantiles(quantile_levels)
     ctx = _resolve_ctx_len(model, context_length)
 
-    backend = models.get(model)
-    result = await backend.predict_covariates_past(context, past_covariates, horizon, q, ctx, extra=_resolve_extra(extra))
-    await _maybe_unload(model, unload_after)
-    return result
+    async def _forecast() -> dict[str, Any]:
+        return await models.get(model).predict_covariates_past(
+            context,
+            past_covariates,
+            horizon,
+            q,
+            ctx,
+            extra=_resolve_extra(extra),
+        )
+
+    return await _run_model_forecast(model, _forecast, unload_after)
 
 
 async def ensemble_covariates_past(
@@ -470,9 +495,18 @@ async def ensemble_covariates_past(
             global_extra=extra,
             overrides=member_overrides,
         )
-        out = await models.get(slug).predict_covariates_past(context, past_covariates, horizon, q_eff, ctx, extra=eff_extra)
-        await _maybe_unload(slug, unload_after)
-        return out
+
+        async def _forecast() -> dict[str, Any]:
+            return await models.get(slug).predict_covariates_past(
+                context,
+                past_covariates,
+                horizon,
+                q_eff,
+                ctx,
+                extra=eff_extra,
+            )
+
+        return await _run_model_forecast(slug, _forecast, unload_after)
 
     return await _aggregate_quantile_ensemble(types.TYPE_COVARIATES_PAST, norm, _one, horizon, q)
 
@@ -497,10 +531,17 @@ async def dispatch_covariates_future(
     q = _resolve_quantiles(quantile_levels)
     ctx = _resolve_ctx_len(model, context_length)
 
-    backend = models.get(model)
-    result = await backend.predict_covariates_future(context, future_covariates, horizon, q, ctx, extra=_resolve_extra(extra))
-    await _maybe_unload(model, unload_after)
-    return result
+    async def _forecast() -> dict[str, Any]:
+        return await models.get(model).predict_covariates_future(
+            context,
+            future_covariates,
+            horizon,
+            q,
+            ctx,
+            extra=_resolve_extra(extra),
+        )
+
+    return await _run_model_forecast(model, _forecast, unload_after)
 
 
 async def ensemble_covariates_future(
@@ -528,9 +569,18 @@ async def ensemble_covariates_future(
             global_extra=extra,
             overrides=member_overrides,
         )
-        out = await models.get(slug).predict_covariates_future(context, future_covariates, horizon, q_eff, ctx, extra=eff_extra)
-        await _maybe_unload(slug, unload_after)
-        return out
+
+        async def _forecast() -> dict[str, Any]:
+            return await models.get(slug).predict_covariates_future(
+                context,
+                future_covariates,
+                horizon,
+                q_eff,
+                ctx,
+                extra=eff_extra,
+            )
+
+        return await _run_model_forecast(slug, _forecast, unload_after)
 
     return await _aggregate_quantile_ensemble(types.TYPE_COVARIATES_FUTURE, norm, _one, horizon, q)
 
@@ -557,10 +607,18 @@ async def dispatch_covariates(
     q = _resolve_quantiles(quantile_levels)
     ctx = _resolve_ctx_len(model, context_length)
 
-    backend = models.get(model)
-    result = await backend.predict_covariates_both(context, past_covariates, future_covariates, horizon, q, ctx, extra=_resolve_extra(extra))
-    await _maybe_unload(model, unload_after)
-    return result
+    async def _forecast() -> dict[str, Any]:
+        return await models.get(model).predict_covariates_both(
+            context,
+            past_covariates,
+            future_covariates,
+            horizon,
+            q,
+            ctx,
+            extra=_resolve_extra(extra),
+        )
+
+    return await _run_model_forecast(model, _forecast, unload_after)
 
 
 async def ensemble_covariates(
@@ -590,9 +648,19 @@ async def ensemble_covariates(
             global_extra=extra,
             overrides=member_overrides,
         )
-        out = await models.get(slug).predict_covariates_both(context, past_covariates, future_covariates, horizon, q_eff, ctx, extra=eff_extra)
-        await _maybe_unload(slug, unload_after)
-        return out
+
+        async def _forecast() -> dict[str, Any]:
+            return await models.get(slug).predict_covariates_both(
+                context,
+                past_covariates,
+                future_covariates,
+                horizon,
+                q_eff,
+                ctx,
+                extra=eff_extra,
+            )
+
+        return await _run_model_forecast(slug, _forecast, unload_after)
 
     return await _aggregate_quantile_ensemble(types.TYPE_COVARIATES_BOTH, norm, _one, horizon, q)
 
@@ -620,12 +688,16 @@ async def dispatch_samples(
         raise ValueError(f"numSamples must be > 0, got {n}")
     ctx = _resolve_ctx_len(model, context_length)
 
-    backend = models.get(model)
-    result = await backend.predict_samples(
-        context, horizon, n, ctx, extra=_resolve_extra(extra),
-    )
-    await _maybe_unload(model, unload_after)
-    return result
+    async def _forecast() -> dict[str, Any]:
+        return await models.get(model).predict_samples(
+            context,
+            horizon,
+            n,
+            ctx,
+            extra=_resolve_extra(extra),
+        )
+
+    return await _run_model_forecast(model, _forecast, unload_after)
 
 
 async def ensemble_samples(
@@ -659,11 +731,17 @@ async def ensemble_samples(
             global_extra=extra,
             overrides=member_overrides,
         )
-        out = await models.get(slug).predict_samples(
-            context, horizon, per_member[slug], ctx, extra=eff_extra,
-        )
-        await _maybe_unload(slug, unload_after)
-        return out
+
+        async def _forecast() -> dict[str, Any]:
+            return await models.get(slug).predict_samples(
+                context,
+                horizon,
+                per_member[slug],
+                ctx,
+                extra=eff_extra,
+            )
+
+        return await _run_model_forecast(slug, _forecast, unload_after)
 
     active = list(norm.keys())
     results = await asyncio.gather(*[_one(s) for s in active], return_exceptions=False)
@@ -710,10 +788,7 @@ async def _aggregate_quantile_ensemble(
 
     n_series = len(individual[active[0]]["median"])
     median_avg = [
-        [
-            sum(individual[s]["median"][i][t] * norm[s] for s in active)
-            for t in range(horizon)
-        ]
+        [sum(individual[s]["median"][i][t] * norm[s] for s in active) for t in range(horizon)]
         for i in range(n_series)
     ]
     quantiles_avg: dict[str, list[list[float]]] = {}

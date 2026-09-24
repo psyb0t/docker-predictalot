@@ -18,11 +18,17 @@ All runtime configuration is via `PREDICTALOT_*` env vars. Set them via `docker 
 | `PREDICTALOT_TIMESFM_MAX_CONTEXT` | `2048` | Compile-time max for TimesFM. Multiple of 32. |
 | `PREDICTALOT_TIMESFM_MAX_HORIZON` | `512` | Compile-time max for TimesFM. Multiple of 128. |
 | `PREDICTALOT_MOIRAI_MAX_CONTEXT` | `4000` | Wrapper context-length for Moirai-2. Per-request inputs zero-padded to this length. |
-| `PREDICTALOT_MOIRAI_MAX_HORIZON` | `512` | Wrapper prediction-length for Moirai-2. Per-request horizons must be ≤ this. |
+| `PREDICTALOT_MOIRAI_MAX_HORIZON` | `512` | Upper per-request horizon for Moirai-2. Wrappers are cached per requested horizon. Multivariate requests also have a 64-step native limit. |
 | `PREDICTALOT_SUNDIAL_SOCK` | `/tmp/predictalot/sundial.sock` | Unix-socket path the main service uses to talk to the sundial sidecar. |
 | `PREDICTALOT_SUNDIAL_NUM_SAMPLES` | `64` | Monte-Carlo samples per sundial forecast (more = smoother quantiles, linearly slower). |
 | `PREDICTALOT_SUNDIAL_READY_TIMEOUT` | `60s` | How long the main service waits for the sundial sidecar to come up on first request. |
 | `PREDICTALOT_LOG_LEVEL` | `INFO` | Standard Python log levels (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+
+## Model memory lifecycle
+
+Models load lazily, including after a configured preload. A loaded model gets an idle timestamp immediately, then the background sweeper checks it every 60 seconds. Set an idle timeout to `0` only when keeping resident weights forever is intentional.
+
+`POST /v1/models/unload` immediately releases every resident foundation model. It also runs Python garbage collection, resets Torch compiler caches, and releases CUDA cache and IPC resources when CUDA is available. The endpoint returns `409` instead of interrupting any active foundation forecast. A forecast body with `"unload": true` schedules that model for release after every in-flight request for the same model has finished.
 
 ## Sensible defaults
 

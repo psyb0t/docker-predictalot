@@ -685,7 +685,7 @@ wheels = [
 
 [[package]]
 name = "predictalot"
-version = "0.2.1"
+version = "1.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

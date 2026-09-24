@@ -5,8 +5,7 @@ is cached once; per-mode we build a Moirai2Forecast wrapper with the right
 target_dim / past_feat_dynamic_real_dim. Wrappers are cached by their
 dimension tuple — rewrapping is cheap (just re-binds the module).
 
-Supported types: univariate, multivariate (UPSTREAM-UNTESTED, see footgun
-in `.research_files/moirai2-modes.md`), covariates-past.
+Supported types: univariate, multivariate, covariates-past.
 """
 
 from __future__ import annotations
@@ -34,8 +33,8 @@ log = logging.getLogger(f"predictalot.models.{SLUG}")
 
 _lock = asyncio.Lock()
 _module: Any = None  # cached Moirai2Module (the weights)
-# Wrapper cache: (target_dim, past_feat_dim) -> Moirai2Forecast
-_wrappers: dict[tuple[int, int], Any] = {}
+# Wrapper cache: (target_dim, past_feat_dim, prediction_length) -> Moirai2Forecast
+_wrappers: dict[tuple[int, int, int], Any] = {}
 _last_used: float | None = None
 
 _NATIVE_QUANTILES: tuple[float, ...] = tuple(round(0.1 * i, 1) for i in range(1, 10))
@@ -71,13 +70,12 @@ async def get_model() -> Any:
         path = await asyncio.to_thread(storage.ensure_snapshot, SLUG)
         log.info("loading moirai-2 from %s", path)
         _module = await asyncio.to_thread(_load_module_sync, str(path))
-        # Pre-build the univariate wrapper (most common path).
-        _wrappers[(1, 0)] = _build_wrapper_sync(_module, target_dim=1, past_feat_dim=0)
         log.info(
-            "moirai-2 loaded (wrapper context_length=%d, prediction_length=%d)",
+            "moirai-2 loaded (wrapper context_length=%d, max_prediction_length=%d)",
             config.MOIRAI_MAX_CONTEXT,
             config.MOIRAI_MAX_HORIZON,
         )
+        _bump_last_used()
         return _module
 
 
@@ -87,12 +85,17 @@ def _load_module_sync(path: str) -> Any:
     return Moirai2Module.from_pretrained(path)
 
 
-def _build_wrapper_sync(module: Any, target_dim: int, past_feat_dim: int) -> Any:
+def _build_wrapper_sync(
+    module: Any,
+    target_dim: int,
+    past_feat_dim: int,
+    prediction_length: int,
+) -> Any:
     from uni2ts.model.moirai2 import Moirai2Forecast
 
     return Moirai2Forecast(
         module=module,
-        prediction_length=config.MOIRAI_MAX_HORIZON,
+        prediction_length=prediction_length,
         context_length=config.MOIRAI_MAX_CONTEXT,
         target_dim=target_dim,
         feat_dynamic_real_dim=0,
@@ -100,14 +103,26 @@ def _build_wrapper_sync(module: Any, target_dim: int, past_feat_dim: int) -> Any
     ).to(resolve_device())
 
 
-def _get_or_build_wrapper(target_dim: int, past_feat_dim: int) -> Any:
-    key = (target_dim, past_feat_dim)
+def _get_or_build_wrapper(
+    target_dim: int,
+    past_feat_dim: int,
+    prediction_length: int,
+) -> Any:
+    key = (target_dim, past_feat_dim, prediction_length)
     if key in _wrappers:
         return _wrappers[key]
     log.info(
-        "moirai-2: building new wrapper target_dim=%d past_feat_dim=%d", target_dim, past_feat_dim
+        "moirai-2: building wrapper target_dim=%d past_feat_dim=%d prediction_length=%d",
+        target_dim,
+        past_feat_dim,
+        prediction_length,
     )
-    _wrappers[key] = _build_wrapper_sync(_module, target_dim, past_feat_dim)
+    _wrappers[key] = _build_wrapper_sync(
+        _module,
+        target_dim,
+        past_feat_dim,
+        prediction_length,
+    )
     return _wrappers[key]
 
 
@@ -139,6 +154,18 @@ def _check_horizon(horizon: int) -> None:
         )
 
 
+def _check_multivariate_horizon(horizon: int) -> None:
+    if _module is None:
+        raise RuntimeError("moirai-2 module must be loaded before checking multivariate horizon")
+
+    native_max_horizon = _module.patch_size * _module.num_predict_token
+    if horizon > native_max_horizon:
+        raise HorizonTooLargeError(
+            f"moirai-2: multivariate horizon {horizon} exceeds its native maximum "
+            f"{native_max_horizon}; use a horizon at or below {native_max_horizon}"
+        )
+
+
 # ─── univariate ───────────────────────────────────────────────────────────────
 
 
@@ -152,7 +179,11 @@ async def predict_univariate(
     _check_horizon(horizon)
     await get_model()
     async with _lock:
-        forecast = _get_or_build_wrapper(target_dim=1, past_feat_dim=0)
+        forecast = _get_or_build_wrapper(
+            target_dim=1,
+            past_feat_dim=0,
+            prediction_length=horizon,
+        )
         result = await asyncio.to_thread(
             _predict_univariate_sync, forecast, context, horizon, quantile_levels, context_length
         )
@@ -215,6 +246,7 @@ async def predict_multivariate(
 ) -> dict[str, Any]:
     _check_horizon(horizon)
     await get_model()
+    _check_multivariate_horizon(horizon)
 
     if not context or not context[0]:
         raise ValueError("multivariate context is empty")
@@ -234,7 +266,11 @@ async def predict_multivariate(
     )
 
     async with _lock:
-        forecast = _get_or_build_wrapper(target_dim=n_channels, past_feat_dim=0)
+        forecast = _get_or_build_wrapper(
+            target_dim=n_channels,
+            past_feat_dim=0,
+            prediction_length=horizon,
+        )
         result = await asyncio.to_thread(
             _predict_multivariate_sync,
             forecast,
@@ -272,9 +308,7 @@ def _predict_multivariate_sync(
                 f"all channels must align in time"
             )
         # Slice each channel to context length.
-        sliced_channels = [
-            ch[-context_length:] if context_length > 0 else ch for ch in series
-        ]
+        sliced_channels = [ch[-context_length:] if context_length > 0 else ch for ch in series]
         actual_len = len(sliced_channels[0])
         effective_actual = min(actual_len, wrapper_ctx)
         sliced_channels = [ch[-effective_actual:] for ch in sliced_channels]
@@ -316,7 +350,8 @@ def _predict_multivariate_sync(
             ) from exc
         out_quantiles[_qkey(q_level)] = [
             # series_q: [9, H, N] -> swap to [N, H] for one quantile
-            series_q[q_idx].T.tolist() for series_q in per_series_outputs
+            series_q[q_idx].T.tolist()
+            for series_q in per_series_outputs
         ]
     median = [series_q[median_idx].T.tolist() for series_q in per_series_outputs]
 
@@ -358,12 +393,14 @@ async def predict_covariates_past(
             )
     n_past_feat = len(ref_names)
     if n_past_feat == 0:
-        raise ValueError(
-            "covariates-past requires at least one past covariate per series; got 0"
-        )
+        raise ValueError("covariates-past requires at least one past covariate per series; got 0")
 
     async with _lock:
-        forecast = _get_or_build_wrapper(target_dim=1, past_feat_dim=n_past_feat)
+        forecast = _get_or_build_wrapper(
+            target_dim=1,
+            past_feat_dim=n_past_feat,
+            prediction_length=horizon,
+        )
         result = await asyncio.to_thread(
             _predict_covariates_past_sync,
             forecast,
@@ -427,9 +464,7 @@ def _predict_covariates_past_sync(
             cov_arr[-actual_len:, k_idx] = sliced_block[name]
         past_feat = torch.from_numpy(cov_arr.reshape(1, wrapper_ctx, K)).to(device)
 
-        past_feat_observed = torch.zeros(
-            (1, wrapper_ctx, K), dtype=torch.bool, device=device
-        )
+        past_feat_observed = torch.zeros((1, wrapper_ctx, K), dtype=torch.bool, device=device)
         past_feat_observed[:, -actual_len:, :] = True
 
         with torch.no_grad():
@@ -467,9 +502,7 @@ def _pack_quantiles_1d(
             raise ValueError(
                 f"moirai-2: quantile level {q_level} not in supported set {_NATIVE_QUANTILES}"
             ) from exc
-        out_quantiles[_qkey(q_level)] = [
-            series_q[:, q_idx].tolist() for series_q in all_quantiles
-        ]
+        out_quantiles[_qkey(q_level)] = [series_q[:, q_idx].tolist() for series_q in all_quantiles]
 
     median = [series_q[:, median_idx].tolist() for series_q in all_quantiles]
 

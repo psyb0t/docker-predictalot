@@ -5,6 +5,15 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.2.0, 2026-09-24
+
+Foundation-model lifecycle controls and a Moirai multivariate forecast fix.
+
+- Added `POST /v1/models/unload` and the `unload_models` MCP tool. They release every resident foundation model, Python garbage, Torch compiler state, and CUDA caches. The explicit endpoint returns `409` while a foundation forecast is active.
+- Forecast requests with `"unload": true` now wait for concurrent forecasts using that model before releasing it. Idle cleanup uses the same lifecycle lock.
+- Sundial unload now clears weights in its sidecar process instead of only clearing the main service's bridge state.
+- Moirai-2 wrappers are cached per requested horizon. Multivariate forecasts over the model's 64-step native limit now return `400` instead of failing upstream with `503`.
+
 ## v1.1.9 — 2026-08-01
 
 CI plumbing only. No code in this repo changed — every commit in this release touches `.github/workflows/`.

@@ -1,0 +1,19 @@
+title = "predictalot secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Gitignored local state and generated test artifacts"
+paths = [
+  '''(^|/)\.mypy_cache(?:/|$)''',
+  '''(^|/)\.pytest_cache(?:/|$)''',
+  '''(^|/)\.research_files(?:/|$)''',
+  '''(^|/)\.testing(?:/|$)''',
+  '''(^|/)\.venv(?:/|$)''',
+  '''(^|/)AGENTS\.md$''',
+  '''(^|/)CLAUDE\.md$''',
+  '''(^|/)git-update\.sh$''',
+  '''(^|/)tests/integration/\.fixtures(?:/|$)''',
+  '''(^|/)__pycache__(?:/|$)''',
+]

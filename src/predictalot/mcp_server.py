@@ -28,6 +28,8 @@ from typing import Any, Awaitable, MutableMapping
 
 from . import config, dispatch, types
 from .auth import _token_matches
+from .errors import ModelBusyError, ModelUnloadError
+from .model_lifecycle import model_lifecycle
 
 log = logging.getLogger("predictalot.mcp")
 
@@ -41,6 +43,8 @@ _SAFE_USER_EXCEPTIONS = (
     ValueError,
     dispatch.UnknownModelError,
     dispatch.BadQuantileLevelsError,
+    ModelBusyError,
+    ModelUnloadError,
     types.ModelDoesNotSupportTypeError,
     types.UnknownTypeError,
 )
@@ -80,8 +84,25 @@ def build_mcp_app() -> Any:
     _register_covariates_future(mcp)
     _register_covariates_both(mcp)
     _register_samples(mcp)
+    _register_model_lifecycle(mcp)
 
     return mcp.streamable_http_app()
+
+
+def _register_model_lifecycle(mcp: Any) -> None:
+    @mcp.tool(
+        name="unload_models",
+        description=(
+            "Unload every resident foundation model and release model memory, "
+            "Python garbage, Torch compiler caches, and CUDA cache resources. "
+            "The operation refuses to run while any foundation forecast is active."
+        ),
+    )
+    async def _tool() -> str:
+        return await _call_json(
+            model_lifecycle.unload_all(),
+            context="models/unload",
+        )
 
 
 # ─── univariate ──────────────────────────────────────────────────────────────

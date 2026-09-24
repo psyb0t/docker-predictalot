@@ -1,9 +1,4 @@
-"""POST /v1/timeseries/multivariate/{forecast,forecast/ensemble} + GET /v1/timeseries/multivariate/models.
-
-WARNING: moirai-2 multivariate is upstream-untested (see
-`.research_files/moirai2-modes.md` §footguns). Verify channel-order
-correctness before relying on it.
-"""
+"""Routes for multivariate forecasts and model metadata."""
 
 from __future__ import annotations
 

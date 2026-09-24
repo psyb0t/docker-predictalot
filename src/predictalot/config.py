@@ -85,17 +85,13 @@ ALLOW_NO_AUTH: bool = _bool_env("PREDICTALOT_ALLOW_NO_AUTH", False)
 
 DEVICE: str = os.environ.get("PREDICTALOT_DEVICE", "auto").strip() or "auto"
 if DEVICE not in ("auto", "cpu", "cuda") and not DEVICE.startswith("cuda:"):
-    raise ValueError(
-        f"PREDICTALOT_DEVICE={DEVICE!r} must be 'auto', 'cpu', 'cuda', or 'cuda:N'"
-    )
+    raise ValueError(f"PREDICTALOT_DEVICE={DEVICE!r} must be 'auto', 'cpu', 'cuda', or 'cuda:N'")
 
 
 def _validate_slugs(name: str, slugs: list[str]) -> list[str]:
     unknown = [s for s in slugs if s not in MODEL_SLUGS]
     if unknown:
-        raise ValueError(
-            f"{name} contains unknown slugs: {unknown!r}; valid: {list(MODEL_SLUGS)}"
-        )
+        raise ValueError(f"{name} contains unknown slugs: {unknown!r}; valid: {list(MODEL_SLUGS)}")
     return slugs
 
 
@@ -154,10 +150,9 @@ if TIMESFM_MAX_HORIZON % 128 != 0:
         f"PREDICTALOT_TIMESFM_MAX_HORIZON={TIMESFM_MAX_HORIZON} must be a multiple of 128"
     )
 
-# Moirai-2 wrapper dimensions — baked into Moirai2Forecast at model-load time
-# (it compiles internal patching at these sizes). Per-request inputs shorter
-# than MAX_CONTEXT are zero-padded with past_is_pad=True; horizons must be
-# <= MAX_HORIZON. Bump the env vars + restart to expand the envelope.
+# Moirai-2 wrapper context is fixed. Forecast wrappers are cached per requested
+# horizon, which must not exceed MAX_HORIZON. Short inputs are zero-padded with
+# past_is_pad=True.
 MOIRAI_MAX_CONTEXT: int = _int_env("PREDICTALOT_MOIRAI_MAX_CONTEXT", 4000)
 MOIRAI_MAX_HORIZON: int = _int_env("PREDICTALOT_MOIRAI_MAX_HORIZON", 512)
 if MOIRAI_MAX_CONTEXT <= 0:

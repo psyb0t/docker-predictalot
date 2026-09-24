@@ -20,14 +20,14 @@ end. So do rows where every feature value is the warmup-zero default
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 
 
 def build_training_matrix(
     target: Sequence[float],
-    feature_channels: dict[str, Sequence[float]],
+    feature_channels: Mapping[str, Sequence[float]],
     horizon: int,
     mode: str,
     min_samples: int | None,
@@ -105,7 +105,7 @@ def build_training_matrix(
 
 
 def build_forecast_matrix(
-    feature_channels: dict[str, Sequence[float]],
+    feature_channels: Mapping[str, Sequence[float]],
     feature_names: list[str],
 ) -> np.ndarray:
     """Return a single-row (1 × n_features) matrix from the LAST bar of

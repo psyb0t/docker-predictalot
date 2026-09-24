@@ -30,11 +30,11 @@ Two shapes — application errors return a human-readable string; Pydantic valid
 | 400 | string | bad input — empty context, unsupported quantile level, horizon over compile-time cap, model is not a member of the requested type, unknown weights slug for the type, tabular train/forecast with conflicting mode, etc. |
 | 401 | string | missing / wrong bearer token. Open-auth deployments (`PREDICTALOT_ALLOW_NO_AUTH=1` + empty token list) skip auth and never produce 401. |
 | 404 | string | unknown model slug in `model` field; tabular `modelId` not found; meta-forecast called on a `modelId` that doesn't exist. |
-| 409 | string | tabular train with `overwrite: false` against an existing `modelId`. |
+| 409 | string | tabular train with `overwrite: false` against an existing `modelId`, or `POST /v1/models/unload` while a foundation forecast is active. |
 | 410 | string | tabular forecast against a `modelId` whose backend is no longer registered (rare — happens if a backend slug is removed across versions). |
 | 413 | string | request body > `PREDICTALOT_MAX_BODY_SIZE`. |
 | 422 | array | Pydantic validation (field type / required / range constraints). |
-| 503 | string | model snapshot download failed, inference error, or sidecar worker unreachable. |
+| 503 | string | model snapshot download failed, inference error, sidecar worker unreachable, or a foundation-model unload failed. |
 
 ## Common 400 causes by surface
 
@@ -68,10 +68,12 @@ Two shapes — application errors return a human-readable string; Pydantic valid
 - Diversified with `mode="quantile"` but no `quantileLevels`.
 - Calibrated with `mode!="direction"`.
 
-## When you see 503
+## When a forecast returns 503
 
 The 503 path covers three distinct causes — read the `detail` string to disambiguate:
 
 1. **HuggingFace download failed** — the snapshot directory wasn't already cached and the HF API was unreachable / rate-limited. Retry. Pre-download with `PREDICTALOT_PREFETCH`.
 2. **Inference threw** — the model loaded but the forward pass crashed (typically OOM on a too-long context, or a backend bug). Tighten `contextLength`; report repro.
 3. **Sundial sidecar unreachable** — the sundial worker is down or restarting. Container's entrypoint auto-restarts within ~2s; retry. Check container logs (`docker logs predictalot`) — sundial worker stderr is tagged `[sundial]`.
+
+`POST /v1/models/unload` returns `503 {"detail":"foundation-model unload failed"}` only when at least one model or its Torch runtime cleanup could not be released. Its generic response intentionally does not expose backend internals. Check the server logs for the specific failure and retry only after resolving it.

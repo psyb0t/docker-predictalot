@@ -106,7 +106,7 @@ A background sweeper runs every 60 s and unloads models idle past their timeout.
 | `PREDICTALOT_TIMESFM_MAX_CONTEXT` | `2048` | Compile-time max context for TimesFM. Multiple of 32. |
 | `PREDICTALOT_TIMESFM_MAX_HORIZON` | `512` | Compile-time max horizon for TimesFM. Multiple of 128. |
 | `PREDICTALOT_MOIRAI_MAX_CONTEXT` | `4000` | Wrapper context length for Moirai-2 (shorter inputs zero-padded). |
-| `PREDICTALOT_MOIRAI_MAX_HORIZON` | `512` | Wrapper max horizon for Moirai-2. |
+| `PREDICTALOT_MOIRAI_MAX_HORIZON` | `512` | Upper horizon for Moirai-2. Wrappers are cached per requested horizon. Multivariate requests have a 64-step native limit. |
 
 ### Sundial sidecar + logging
 
@@ -141,7 +141,14 @@ curl -s http://localhost:8080/v1/timeseries/univariate/models \
   -H "Authorization: Bearer $PREDICTALOT_AUTH_TOKEN" | jq
 ```
 
-Free a resident model early by sending a request with `"unload": true` in the body — it forecasts, then tears the model down.
+Free every resident foundation model early when the next task does not need it:
+
+```bash
+curl -s -X POST http://localhost:8080/v1/models/unload \
+  -H "Authorization: Bearer $PREDICTALOT_AUTH_TOKEN" | jq
+```
+
+The endpoint returns `409` while a foundation forecast is active. A forecast body with `"unload": true` instead schedules that model for teardown after concurrent forecasts using the same model have finished.
 
 ## OpenClaw / ClawHub Config
 

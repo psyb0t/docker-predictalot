@@ -1,12 +1,4 @@
-"""POST /v1/timeseries/covariates/{forecast,forecast/ensemble} + GET /v1/timeseries/covariates/models.
-
-Past+future combined mode. Only chronos-2 supports this in v0.2.
-
-Route ordering note: this router is registered AFTER the more-specific
-/v1/timeseries/covariates/past/ and /v1/timeseries/covariates/future/ routers. Even so the paths
-don't collide because the per-endpoint segments (forecast, models, etc.)
-differ — but registering in the right order avoids any future ambiguity.
-"""
+"""Routes for forecasts with past and future covariates."""
 
 from __future__ import annotations
 
