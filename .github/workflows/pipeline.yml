@@ -19,14 +19,26 @@ jobs:
       repository_name: psyb0t/predictalot
       target_platforms: "linux/amd64"
       scan_severity: "high"
-      cache_mode: "min"
+      cache_mode: "max"
       # Report scan findings to the Security tab but don't fail the run, so the
       # clawhub publish job below can depend on this workflow succeeding.
       scan_fail_build: false
       build_targets: |
         [
-          {"file": "Dockerfile",      "tag_suffix": "",      "platforms": "linux/amd64"},
-          {"file": "Dockerfile.cuda", "tag_suffix": "-cuda", "platforms": "linux/amd64"}
+          {
+            "file": "Dockerfile",
+            "tag_suffix": "",
+            "platforms": "linux/amd64",
+            "cache_from": "type=registry,ref=psyb0t/predictalot:buildcache-cpu",
+            "cache_to": "type=registry,ref=psyb0t/predictalot:buildcache-cpu,mode=max,ignore-error=true"
+          },
+          {
+            "file": "Dockerfile.cuda",
+            "tag_suffix": "-cuda",
+            "platforms": "linux/amd64",
+            "cache_from": "type=registry,ref=psyb0t/predictalot:buildcache-cuda",
+            "cache_to": "type=registry,ref=psyb0t/predictalot:buildcache-cuda,mode=max,ignore-error=true"
+          }
         ]
 
     secrets:

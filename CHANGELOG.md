@@ -5,6 +5,13 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.2.1, 2026-09-24
+
+Docker builds now keep their heavyweight dependencies cached when application source changes.
+
+- CPU and CUDA images install locked dependencies before application source enters the build, so source-only changes rebuild only the lightweight runtime layers.
+- The pipeline publishes independent CPU and CUDA registry cache refs in max mode. Main, release tags, and retries can reuse those layers without exhausting GitHub Actions cache storage.
+
 ## v1.2.0, 2026-09-24
 
 Foundation-model lifecycle controls and a Moirai multivariate forecast fix.
