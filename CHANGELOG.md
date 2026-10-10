@@ -5,6 +5,10 @@ Pre-1.0 minor bumps could include breaking REST changes (called out
 explicitly). From v1.0.0 onward the public API surface is stable and any
 breaking change requires a major bump.
 
+## v1.2.2, 2026-10-10
+
+Documentation only. The README's agent integrations section names [peen](https://github.com/psyb0t/peen) as an example of an agent that reads `.agents/skills/`.
+
 ## v1.2.1, 2026-09-24
 
 Docker builds now keep their heavyweight dependencies cached when application source changes.

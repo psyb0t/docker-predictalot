@@ -59,7 +59,7 @@ curl -s -X POST http://localhost:8080/v1/models/unload \
 
 ## Agent integrations
 
-The [skill](.agents/skills/predictalot) works in any agent that reads `.agents/skills/`, and
+The [skill](.agents/skills/predictalot) works in any agent that reads `.agents/skills/` (such as [peen](https://github.com/psyb0t/peen)), and
 installs natively in the clients below.
 
 ### Claude Code
