@@ -87,3 +87,6 @@ tests/integration/.fixtures/
 
 # Local test plans and evidence
 .testing/
+
+# Review receipt for the local release script.
+git-update.sh.debot
